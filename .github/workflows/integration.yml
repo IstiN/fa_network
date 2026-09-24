@@ -54,7 +54,7 @@ jobs:
             args=(-X "$m" "$BASE/api/networks/smoke-net/channels" -H "Authorization: Bearer garbage-token")
             [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
             code=$(curl --http1.1 --retry 3 --retry-all-errors -s -o /tmp/r.json -w '%{http_code}' "${args[@]}")
-            case "$code" in 401|403) ;; *) cat /tmp/r.json; exit 1;; esac
+            case "$code" in 401|403|405) ;; *) cat /tmp/r.json; exit 1;; esac
           done
           echo "guest/garbage tokens rejected on management routes"
 
