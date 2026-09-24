@@ -58,6 +58,9 @@ jobs:
             --project "${{ vars.GCP_PROJECT_ID }}" \
             --region "${{ vars.GCP_REGION }}" \
             --port 8080 \
+            --cpu 1 --memory 512Mi \
+            --min-instances 0 --max-instances 3 \
+            --concurrency 100 \
             --allow-unauthenticated \
             --set-env-vars FA_NETWORK_AUTH_PROVIDER=ai-native,FA_NETWORK_AUTH_BASE_URL=https://ai-native.cloud,FA_NETWORK_RETENTION_INACTIVITY_DAYS=30 \
             --set-secrets FA_NETWORK_DATABASE_URL=fa-network-database-url:latest,FA_NETWORK_WEBHOOK_SECRET=fa-network-webhook-secret:latest
