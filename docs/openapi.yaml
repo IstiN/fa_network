@@ -392,7 +392,10 @@ paths:
         In a `public` channel a non-owner write is rejected `403
         channel_read_only` (AC-B5, E8). The payload byte-shape with an @tag
         is identical to an untagged one (AC-B3/UT-1) — the server never
-        parses content.
+        parses content. @tag wake-ups (AC-B6) ride the OPTIONAL `mentions`
+        field: client-side tag resolution sends the mentioned agent ids as
+        identity metadata; an offline mentioned agent with a registered
+        webhook is woken (debounced, identity-only payload).
       parameters:
         - $ref: '#/components/parameters/ChannelId'
       requestBody:
@@ -439,9 +442,13 @@ paths:
         | `network.drain` | `{count}` | reconnected; replaying queued envelopes |
         | `wakeup.dispatched` | `{agentId, at}` | owners/admins only (observability) |
 
-        **Client → server frames:** `envelope.send` (same schema as
-        `EnvelopeInput`), `subscribe {channelId}`, `unsubscribe {channelId}`,
-        `ping`.
+        **Client → server frames:**
+        - `envelope.send` — `EnvelopeInput` fields plus `channelId`
+          (the envelope itself carries no channel): `{type: "envelope.send",
+          channelId, id, payload, mentions?}`.
+        - `subscribe {channelId}`, `unsubscribe {channelId}`.
+        - `ping` — the server answers `pong`; two missed heartbeats
+          beyond 65s ghost-clean the presence (E7).
       parameters:
         - name: Authorization
           in: header
@@ -492,9 +499,11 @@ paths:
       description: |
         Identity-only trigger contract: the webhook body carries
         `{agentId, networkId, triggeredAt}` — **never message content**
-        (AC-B6). Dispatch is debounced per agent while offline (one call per
-        window); presence `online` ⇒ zero calls. Webhook secret is set once,
-        rotatable, never returned afterwards.
+        (AC-B6). Triggers fire when an envelope's `mentions` include the
+        agent and its presence is offline; dispatch is debounced per agent
+        (one call per window, default 300s, min 30s); presence `online` ⇒
+        zero calls (`skipped_online` in the log). Webhook secret is set
+        once, rotatable, never returned afterwards.
       security:
         - authJwt: []
       parameters:
@@ -766,6 +775,14 @@ components:
           type: array
           items: { type: string }
           description: dap channel ACL member ids (pubkey identities).
+        retentionDays:
+          type: integer
+          minimum: 0
+          description: |
+            OPTIONAL per-channel envelope retention (AC-B12). Envelopes
+            older than this many days are deleted by the nightly sweep;
+            `0` keeps nothing beyond live relay; omitted = keep until the
+            network-level 30-day inactivity wipe.
 
     ChannelCreateRequest:
       type: object
@@ -776,6 +793,10 @@ components:
           minLength: 1
           maxLength: 64
         public: { type: boolean, default: false }
+        retentionDays:
+          type: integer
+          minimum: 0
+          description: OPTIONAL envelope retention (see Channel).
 
     ChannelUpdateRequest:
       type: object
@@ -785,6 +806,13 @@ components:
         acl:
           type: array
           items: { type: string }
+        retentionDays:
+          type: integer
+          minimum: 0
+          description: New retention value (see Channel).
+        clearRetention:
+          type: boolean
+          description: Set true with retentionDays omitted to remove retention.
 
     Envelope:
       type: object
@@ -800,6 +828,14 @@ components:
           description: |
             Base64 opaque E2E ciphertext. The server never inspects or
             transforms it; @tag text lives inside, client-side (AC-B3).
+        mentions:
+          type: array
+          items: { type: string }
+          description: |
+            OPTIONAL agent ids mentioned by the sender — identity metadata
+            only (never message content; law #3). Drives presence-gated
+            wake-up dispatch when a mentioned agent is offline (AC-B6).
+            Omitted/empty on plain messages; de-duplicated server-side.
         createdAt: { type: string, format: date-time }
 
     EnvelopeInput:
@@ -812,6 +848,13 @@ components:
         payload:
           type: string
           description: Base64 opaque E2E ciphertext.
+        mentions:
+          type: array
+          items: { type: string }
+          description: |
+            OPTIONAL agent ids to wake if offline (same contract as
+            Envelope.mentions). Identity-only — the server never parses
+            the ciphertext to find tags.
 
     WakeupRegistrationInput:
       type: object
