@@ -123,12 +123,53 @@ Health probe: `GET /healthz`.
 
 ## Deploy (Google Cloud Run)
 
+Automated: pushing to `main` (or manual **Run workflow**) triggers
+[.github/workflows/deploy.yml](.github/workflows/deploy.yml) — quality
+gates first, then `gcloud run deploy --source .` via Workload Identity
+Federation (keyless). The full runtime contract lives in
+[.env.example](.env.example) — same principles as
+[IstiN/auth](https://github.com/IstiN/auth): every knob is an env var,
+values are filled at deploy time, nothing secret is ever committed.
+
+One-time setup (owner fills values later, no code changes afterwards):
+
+1. **GitHub → Settings → Secrets and variables → Actions**
+   - *Variables*: `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_SERVICE`
+   - *Secrets*: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`
+2. **GCP Workload Identity Federation** (lets GitHub deploy without any
+   downloaded key):
+
+   ```sh
+   gcloud iam workload-identity-pools create github --location=global
+   gcloud iam workload-identity-pools providers create-oidc github-oidc \
+     --location=global --workload-identity-pool=github \
+     --issuer-url=https://token.actions.githubusercontent.com \
+     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+     --attribute-condition="assertion.repository=='IstiN/fa_network'"
+   # then bind the deploy SA as workloadIdentityUser on the provider
+   ```
+
+3. **GCP Secret Manager** (runtime secrets — placeholders now, real
+   values later):
+
+   ```sh
+   printf 'TODO' | gcloud secrets create fa-network-database-url --data-file=-
+   printf 'TODO' | gcloud secrets create fa-network-webhook-secret --data-file=-
+   ```
+
+The workflow wires it together: public knobs via `--set-env-vars`,
+secrets via `--set-secrets
+[REDACTED:High Entropy String]:latest,…`
+(the exact map is documented in the workflow file).
+
+Manual bootstrap alternative (no GitHub setup needed):
+
 ```sh
 gcloud run deploy fa-network \
   --source . \
   --port 8080 \
   --allow-unauthenticated \
-  --set-env-vars FA_NETWORK_AUTH_BASE_URL=https://ai-native.cloud
+  --set-env-vars FA_NETWORK_AUTH_PROVIDER=mock,FA_NETWORK_AUTH_BASE_URL=https://ai-native.cloud
 ```
 
 ## Quality gates
