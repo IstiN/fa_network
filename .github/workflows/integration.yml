@@ -31,9 +31,9 @@ jobs:
 
       - name: Docs + OpenAPI served
         run: |
-          docs=$(curl -sf "$BASE/docs")
+          docs=$(curl --http1.1 --retry 3 --retry-all-errors -sf "$BASE/docs")
           echo "$docs" | grep -q "SwaggerUIBundle"
-          curl -sf "$BASE/openapi.yaml" | grep -q "openapi: 3.0.3"
+          curl --http1.1 --retry 3 --retry-all-errors -sf "$BASE/openapi.yaml" | grep -q "openapi: 3.0.3"
           echo "docs + openapi OK"
 
       - name: AC-B1 — create network without JWT → 401, zero side effects
