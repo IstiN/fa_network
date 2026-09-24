@@ -21,3 +21,7 @@ coverage.out
 *.log
 dist/
 codebase/
+
+# fa local state (curated entries stay tracked: config.yaml)
+.fah/*
+!.fah/config.yaml
