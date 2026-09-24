@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: File size guard (no *.go over 500 lines)
+        run: |
+          violations=$(find . -name '*.go' -not -path './.tools/*' -not -path './bin/*' \
+            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 500 ]; then echo "$1: $lines lines"; fi' _ {} \;)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test with coverage
+        run: |
+          go test ./... -coverprofile=coverage.out
+          go tool cover -func=coverage.out | tail -1
+
+      - name: CRAP gate (crap4go, max 12 — mirrors .githooks/pre-commit)
+        run: |
+          mkdir -p bin .tools
+          git clone --depth 1 https://github.com/vabhzw17eg2qu4m9-bit/crap4go .tools/crap4go
+          (cd .tools/crap4go && go build -o ../../bin/crap4go .)
+          ./bin/crap4go --run-tests --threshold 12 .

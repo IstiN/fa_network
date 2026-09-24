@@ -1,0 +1,23 @@
+# Go
+bin/
+.tools/
+*.test
+coverage.out
+*.prof
+/fa-network
+
+# Environment secrets (never commit; example stays tracked)
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Local artifacts
+*.log
+dist/
+codebase/
