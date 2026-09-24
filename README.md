@@ -121,6 +121,11 @@ FA_NETWORK_ADDR=:9000 go run ./cmd/server
 
 Health probe: `GET /healthz`.
 
+Interactive API docs ship with the binary: **Swagger UI at `/docs`**, the
+raw spec at `/openapi.yaml` (embedded copy of [`docs/openapi.yaml`](docs/openapi.yaml)
+from the same commit — regenerate via `go generate ./...`; a test guards
+drift). Works on any deploy URL out of the box.
+
 ## Deploy (Google Cloud Run)
 
 Automated: pushing to `main` (or manual **Run workflow**) triggers
@@ -190,13 +195,38 @@ Mirrors [dap](https://github.com/vabhzw17eg2qu4m9-bit/dap):
 ## Layout
 
 ```
-cmd/server/        entry point (flag parsing, listener wiring)
-internal/server/   HTTP/WS surface, one package per concern
+cmd/server/        entry point (env wiring, listener, shutdown)
+internal/server/   HTTP/WS surface, one file per concern (REST handlers,
+                   WS endpoint + session registry, relay with offline
+                   queue/drain, wake-up fan-in, retention sweeper)
+internal/auth/     AuthProvider interface + mock / ai-native / oidc
+                   (selected by FA_NETWORK_AUTH_PROVIDER, env-only)
+internal/store/    Store contract + in-memory dev store + Postgres
+                   (Cloud SQL) — envelopes stay opaque ciphertext
+internal/hub/      dap/1 hub client (signed hello, relay identity,
+                   reconnect backoff) + offline fake for tests
+internal/wakeup/   presence-gated, debounced, identity-only webhooks
+internal/model/    domain + wire types (docs/openapi.yaml shapes)
 docs/openapi.yaml  the API contract (law)
 .githooks/         pre-commit quality gates (crap4go)
 .fah/config.yaml   fa agent project config (memory -> ./memory)
 memory/            project memory for fa coding agents
 ```
+
+## Notes for operators
+
+- **Two-class access is impossible-by-construction**: management routes
+  require an ai-native JWT (`requireAuthed`); a join-issued session token
+  never passes — guests are rejected by class, not by config.
+- **Wake-ups**: clients resolve @tags client-side and send mentioned agent
+  ids in the envelope's `mentions` field (identity metadata only, never
+  content). Offline + registered ⇒ one debounced webhook call.
+- **Hub missing?** The service runs fine without `FA_NETWORK_DAP_URL`:
+  everything works locally, outbound envelopes queue and drain once the
+  hub comes online (at-least-once, id-dedup, order preserved).
+- **Dev auth**: with `FA_NETWORK_AUTH_PROVIDER=mock`, drop a
+  `mock_users.json` next to the binary (`[{"login","password"(bcrypt),"name"}]`)
+  or register users at runtime; the full create/join flow runs offline.
 
 ## License
 
