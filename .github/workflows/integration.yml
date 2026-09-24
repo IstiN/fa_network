@@ -38,7 +38,7 @@ jobs:
 
       - name: AC-B1 — create network without JWT → 401, zero side effects
         run: |
-          code=$(curl -s -o /tmp/r.json -w '%{http_code}' \
+          code=$(curl --http1.1 --retry 3 --retry-all-errors -s -o /tmp/r.json -w '%{http_code}' \
             -X POST "$BASE/api/networks" \
             -H 'Content-Type: application/json' \
             -d '{"name":"smoke-net","password":"smoke-password-123"}')
@@ -49,7 +49,7 @@ jobs:
       - name: AC-B3 — garbage management token rejected by class
         run: |
           for m in GET POST DELETE; do
-            code=$(curl -s -o /tmp/r.json -w '%{http_code}' \
+            code=$(curl --http1.1 --retry 3 --retry-all-errors -s -o /tmp/r.json -w '%{http_code}' \
               -X "$m" "$BASE/api/networks/smoke-net/channels" \
               -H "Authorization: Bearer garbage-token" \
               -H 'Content-Type: application/json' -d '{}')
@@ -59,7 +59,7 @@ jobs:
 
       - name: No existence oracle — join unknown network is generic error
         run: |
-          code=$(curl -s -o /tmp/r.json -w '%{http_code}' \
+          code=$(curl --http1.1 --retry 3 --retry-all-errors -s -o /tmp/r.json -w '%{http_code}' \
             -X POST "$BASE/api/networks/does-not-exist/join" \
             -H 'Content-Type: application/json' \
             -d '{"password":"whatever-123","displayName":"smoke"}')
