@@ -48,11 +48,12 @@ jobs:
 
       - name: AC-B3 — garbage management token rejected by class
         run: |
-          for m in GET POST DELETE; do
-            code=$(curl --http1.1 --retry 3 --retry-all-errors -s -o /tmp/r.json -w '%{http_code}' \
-              -X "$m" "$BASE/api/networks/smoke-net/channels" \
-              -H "Authorization: Bearer garbage-token" \
-              -H 'Content-Type: application/json' -d '{}')
+          # NB: GFE rejects GET-with-body as malformed (400) — no body on GET.
+          for spec in "GET" "POST|{}" "DELETE"; do
+            m=${spec%%|*}; body=${spec#*|}; [ "$body" = "$m" ] && body=""
+            args=(-X "$m" "$BASE/api/networks/smoke-net/channels" -H "Authorization: Bearer garbage-token")
+            [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
+            code=$(curl --http1.1 --retry 3 --retry-all-errors -s -o /tmp/r.json -w '%{http_code}' "${args[@]}")
             case "$code" in 401|403) ;; *) cat /tmp/r.json; exit 1;; esac
           done
           echo "guest/garbage tokens rejected on management routes"
