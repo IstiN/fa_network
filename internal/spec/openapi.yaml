@@ -1,0 +1,896 @@
+openapi: 3.0.3
+info:
+  title: fa_network API
+  version: 0.1.0
+  description: |
+    People-facing edge of the fa agent network: a relay-only REST+WS bridge
+    between browsers/apps and the [dap](https://github.com/vabhzw17eg2qu4m9-bit/dap)
+    hub's end-to-end-encrypted channels. Product card:
+    [flutter_agent_harness#913](https://github.com/IstiN/flutter_agent_harness/issues/913);
+    build spec: [issue #1](../issues/1).
+
+    **Two-class access (owner ruling):**
+    - `owner` / `admin` — authed (ai-native JWT), manage networks and channels,
+      the only writers into public showcase channels.
+    - `member` — authed joiner; display name locked to the auth-service name.
+    - `guest` — unauthenticated joiner (network id + password only); rides as
+      an **agent-class identity** (same wire class as fa agents, zero human
+      privileges). No management route accepts a guest token.
+
+    **Relay-only invariant:** fa_network never holds a key that decrypts
+    channel content. Message payloads are opaque E2E ciphertext envelopes —
+    the server stores and relays them, never inspects them. @tag addressing
+    is a client-side visual convention; the wire payload is identical with
+    or without a tag.
+
+    **Wake-up triggers** are presence-gated and identity-only: the webhook
+    payload carries the target agent identity, never message content.
+servers:
+  - url: https://fa-network-<project>.run.app
+    description: Cloud Run (owner's gcloud)
+  - url: http://localhost:8080
+    description: local dev
+
+security:
+  - sessionToken: []
+
+tags:
+  - name: health
+  - name: networks
+  - name: members
+  - name: channels
+  - name: messages
+  - name: realtime
+  - name: agents
+  - name: wakeups
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service is live.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /api/networks:
+    post:
+      tags: [networks]
+      summary: Create a network (authed only)
+      description: |
+        The caller becomes the network **owner**. Requires a valid ai-native
+        JWT (auth service: `/api/auth/config|user|protected`,
+        `POST /api/oauth-proxy/initiate|exchange`). The network gets an
+        id/name + password that others join with. Guests (no JWT) get `401`
+        with zero side effects (AC-B1).
+      security:
+        - authJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkCreateRequest'
+            examples:
+              basic:
+                value: { name: fa-team, password: hunter2hunter2 }
+      responses:
+        '201':
+          description: Network created; caller is owner.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Network'
+                  - type: object
+                    properties:
+                      joinCredentials:
+                        $ref: '#/components/schemas/JoinCredentials'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Network name already taken.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
+  /api/networks/{networkId}/join:
+    post:
+      tags: [networks]
+      summary: Join a network (auth optional)
+      description: |
+        Two classes of join:
+        - **authed** (`Authorization: Bearer <ai-native JWT>`): display name
+          is LOCKED to the auth-service name — `displayName` in the body is
+          ignored (AC-B2, UT-3). Yields a stable dap identity.
+        - **guest** (no JWT): `displayName` required; the joiner rides as an
+          **agent-class identity** — same wire class as fa agents.
+        Wrong password → `403 invalid_credentials` with throttling (E1: no
+        channel-existence oracle, `Retry-After` on repeated failures).
+      security:
+        - authJwt: []
+        - sessionToken: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinRequest'
+      responses:
+        '200':
+          description: Joined; session token + member identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JoinResponse'
+        '403':
+          description: Invalid network password (throttled per E1).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
+  /api/networks/{networkId}:
+    get:
+      tags: [networks]
+      summary: Network metadata (member)
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: Network metadata (no secrets).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Network'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [networks]
+      summary: Update network (owner/admin, authed only)
+      description: Password rotation, rename. Guests rejected by class (E9).
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkUpdateRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Network'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+    delete:
+      tags: [networks]
+      summary: Delete network (owner only)
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '204': { description: Deleted. }
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
+  /api/networks/{networkId}/admins:
+    post:
+      tags: [networks]
+      summary: Appoint a network admin (owner only, authed)
+      description: Owner appoints admins; admins must be authed identities.
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+      responses:
+        '201':
+          description: Admin appointed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
+  /api/networks/{networkId}/admins/{userId}:
+    delete:
+      tags: [networks]
+      summary: Remove a network admin (owner only)
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Removed. }
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
+  /api/networks/{networkId}/members:
+    get:
+      tags: [members]
+      summary: Roster — people and agents (member)
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: Member roster with presence.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Member'
+
+  /api/networks/{networkId}/channels:
+    get:
+      tags: [channels]
+      summary: List channels (member)
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: Channels of the network.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+    post:
+      tags: [channels]
+      summary: Create a channel (authed only)
+      description: |
+        Regular channels are created by authed members. A `public` showcase
+        channel (read-only for everyone except owner/admin) requires
+        owner/admin (AC-B5).
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelCreateRequest'
+      responses:
+        '201':
+          description: Channel created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
+  /api/channels/{channelId}:
+    get:
+      tags: [channels]
+      summary: Channel info (member)
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Channel metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [channels]
+      summary: Update channel (owner/admin, authed)
+      description: Toggle `public`, manage ACL.
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelUpdateRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+    delete:
+      tags: [channels]
+      summary: Delete channel (owner/admin, authed)
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '204': { description: Deleted. }
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
+  /api/channels/{channelId}/messages:
+    get:
+      tags: [messages]
+      summary: Message history (member; opaque envelopes)
+      description: |
+        Relay view of stored envelopes. Payloads are base64 opaque E2E
+        ciphertext — decryption happens client-side (AC-B4: no plaintext on
+        this server, ever).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: cursor
+          in: query
+          description: Pagination cursor from a previous page.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: Page of envelopes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Envelope'
+                  nextCursor: { type: string }
+    post:
+      tags: [messages]
+      summary: Send an envelope (member; public channels owner/admin only)
+      description: |
+        Relay-accept: the envelope is passed to the dap channel verbatim.
+        In a `public` channel a non-owner write is rejected `403
+        channel_read_only` (AC-B5, E8). The payload byte-shape with an @tag
+        is identical to an untagged one (AC-B3/UT-1) — the server never
+        parses content. @tag wake-ups (AC-B6) ride the OPTIONAL `mentions`
+        field: client-side tag resolution sends the mentioned agent ids as
+        identity metadata; an offline mentioned agent with a registered
+        webhook is woken (debounced, identity-only payload).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvelopeInput'
+      responses:
+        '202':
+          description: Accepted for relay (at-least-once, dedup by id).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '403':
+          description: Public channel write by non-owner (E8).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
+  /ws:
+    get:
+      tags: [realtime]
+      summary: Realtime session (WebSocket upgrade)
+      description: |
+        Auth: `Authorization: Bearer <sessionToken>` (from join). One socket
+        per session; heartbeat every 30s (ghost presence cleanup beyond two
+        missed beats — E7). While the dap hub is unreachable the socket
+        reports `network.offline` and queues outbound envelopes; on reconnect
+        it drains once, at-least-once with id-dedup, order preserved (AC-B7).
+
+        **Server → client events** (JSON frames):
+
+        | type | payload | notes |
+        |---|---|---|
+        | `roster.snapshot` | `Member[]` | on connect and on roster change |
+        | `envelope` | `Envelope` | relayed channel ciphertext |
+        | `presence.changed` | `{memberId, presence}` | `live`/`busy`/`offline` |
+        | `network.offline` | `{reason}` | hub unreachable — queueing starts |
+        | `network.drain` | `{count}` | reconnected; replaying queued envelopes |
+        | `wakeup.dispatched` | `{agentId, at}` | owners/admins only (observability) |
+
+        **Client → server frames:**
+        - `envelope.send` — `EnvelopeInput` fields plus `channelId`
+          (the envelope itself carries no channel): `{type: "envelope.send",
+          channelId, id, payload, mentions?}`.
+        - `subscribe {channelId}`, `unsubscribe {channelId}`.
+        - `ping` — the server answers `pong`; two missed heartbeats
+          beyond 65s ghost-clean the presence (E7).
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/networks/{networkId}/agents:
+    get:
+      tags: [agents]
+      summary: Agent roster with presence (member)
+      description: Presence drives wake-up decisions (AC-B6).
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: Agents known to the network.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Agent'
+
+  /api/networks/{networkId}/agents/{agentId}/wakeups:
+    get:
+      tags: [wakeups]
+      summary: Wake-up registration (owner/admin)
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Current registration (secret never returned).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WakeupRegistration'
+    post:
+      tags: [wakeups]
+      summary: Register a wake-up webhook (owner/admin, authed)
+      description: |
+        Identity-only trigger contract: the webhook body carries
+        `{agentId, networkId, triggeredAt}` — **never message content**
+        (AC-B6). Triggers fire when an envelope's `mentions` include the
+        agent and its presence is offline; dispatch is debounced per agent
+        (one call per window, default 300s, min 30s); presence `online` ⇒
+        zero calls (`skipped_online` in the log). Webhook secret is set
+        once, rotatable, never returned afterwards.
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WakeupRegistrationInput'
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WakeupRegistration'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+    delete:
+      tags: [wakeups]
+      summary: Remove the wake-up registration (owner/admin)
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '204': { description: Removed. }
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
+  /api/networks/{networkId}/wakeups/log:
+    get:
+      tags: [wakeups]
+      summary: Wake-up dispatch log (owner/admin)
+      description: Audit trail of dispatches — target, time, outcome. No content.
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Dispatch entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WakeupDispatch'
+                  nextCursor: { type: string }
+
+components:
+  parameters:
+    NetworkId:
+      name: networkId
+      in: path
+      required: true
+      schema: { type: string }
+      description: Network id/name others join with.
+    ChannelId:
+      name: channelId
+      in: path
+      required: true
+      schema: { type: string }
+    AgentId:
+      name: agentId
+      in: path
+      required: true
+      schema: { type: string }
+
+  securitySchemes:
+    authJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        ai-native JWT (github.com/IstiN/auth, dmtools-compatible access
+        token). Required for create/manage routes. Validated by fa_network;
+        never stored.
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: |
+        fa_network session token issued by join. Memory/sessionStorage only —
+        dies with the page (E7). Carries the member class (owner / admin /
+        member / guest).
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials; zero side effects.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ForbiddenByClass:
+      description: |
+        Rejected by class (E9) — e.g. guest on a management route, non-owner
+        write into a public channel. No management route accepts a guest
+        token (impossible-by-construction).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Unknown id (generic — no existence oracle).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Throttled:
+      description: Rate limited (join attempts, sends, wake-up registration).
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - unauthorized
+                - invalid_credentials
+                - forbidden_by_class
+                - channel_read_only
+                - throttled
+                - not_found
+                - conflict
+            message: { type: string }
+
+    NetworkCreateRequest:
+      type: object
+      required: [name, password]
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9-]*$'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+
+    NetworkUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        password:
+          type: string
+          writeOnly: true
+
+    JoinCredentials:
+      type: object
+      properties:
+        networkId: { type: string }
+        password:
+          type: string
+          writeOnly: true
+          description: Share out-of-band; grants guest-class join only.
+
+    Network:
+      type: object
+      required: [id, name, ownerId, publicChannels]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        ownerId: { type: string }
+        admins:
+          type: array
+          items: { type: string }
+        publicChannels:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    JoinRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          writeOnly: true
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            Guest join: required, deduped within the network (`name (2)` on
+            collision — E2). Authed join: IGNORED — the display name is
+            locked to the auth-service name (AC-B12 analog).
+
+    JoinResponse:
+      type: object
+      required: [sessionToken, identity]
+      properties:
+        sessionToken:
+          type: string
+          description: Bearer for member routes + /ws. Memory only (E7).
+        identity:
+          type: object
+          required: [id, class, displayName]
+          properties:
+            id: { type: string }
+            class:
+              type: string
+              enum: [owner, admin, member, guest]
+            displayName: { type: string }
+            authName:
+              type: string
+              description: Present for authed joiners (from the auth service).
+        network:
+          $ref: '#/components/schemas/Network'
+
+    Member:
+      type: object
+      required: [id, class, displayName, presence]
+      properties:
+        id: { type: string }
+        class:
+          type: string
+          enum: [owner, admin, member, guest, agent]
+        displayName: { type: string }
+        presence:
+          type: string
+          enum: [live, busy, offline]
+
+    Agent:
+      type: object
+      required: [agentId, displayName, presence]
+      properties:
+        agentId: { type: string }
+        displayName: { type: string }
+        presence:
+          type: string
+          enum: [live, busy, offline]
+        wakeupRegistered: { type: boolean }
+
+    Channel:
+      type: object
+      required: [id, networkId, public]
+      properties:
+        id: { type: string }
+        networkId: { type: string }
+        name: { type: string }
+        public:
+          type: boolean
+          description: Showcase mode — read for everyone, write owner/admin only.
+        acl:
+          type: array
+          items: { type: string }
+          description: dap channel ACL member ids (pubkey identities).
+        retentionDays:
+          type: integer
+          minimum: 0
+          description: |
+            OPTIONAL per-channel envelope retention (AC-B12). Envelopes
+            older than this many days are deleted by the nightly sweep;
+            `0` keeps nothing beyond live relay; omitted = keep until the
+            network-level 30-day inactivity wipe.
+
+    ChannelCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        public: { type: boolean, default: false }
+        retentionDays:
+          type: integer
+          minimum: 0
+          description: OPTIONAL envelope retention (see Channel).
+
+    ChannelUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        public: { type: boolean }
+        acl:
+          type: array
+          items: { type: string }
+        retentionDays:
+          type: integer
+          minimum: 0
+          description: New retention value (see Channel).
+        clearRetention:
+          type: boolean
+          description: Set true with retentionDays omitted to remove retention.
+
+    Envelope:
+      type: object
+      required: [id, channelId, senderId, payload, createdAt]
+      properties:
+        id:
+          type: string
+          description: Message id — client-generated UUID; dedup key (AC-B7).
+        channelId: { type: string }
+        senderId: { type: string }
+        payload:
+          type: string
+          description: |
+            Base64 opaque E2E ciphertext. The server never inspects or
+            transforms it; @tag text lives inside, client-side (AC-B3).
+        mentions:
+          type: array
+          items: { type: string }
+          description: |
+            OPTIONAL agent ids mentioned by the sender — identity metadata
+            only (never message content; law #3). Drives presence-gated
+            wake-up dispatch when a mentioned agent is offline (AC-B6).
+            Omitted/empty on plain messages; de-duplicated server-side.
+        createdAt: { type: string, format: date-time }
+
+    EnvelopeInput:
+      type: object
+      required: [id, payload]
+      properties:
+        id:
+          type: string
+          description: Client-generated UUID for at-least-once dedup.
+        payload:
+          type: string
+          description: Base64 opaque E2E ciphertext.
+        mentions:
+          type: array
+          items: { type: string }
+          description: |
+            OPTIONAL agent ids to wake if offline (same contract as
+            Envelope.mentions). Identity-only — the server never parses
+            the ciphertext to find tags.
+
+    WakeupRegistrationInput:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: |
+            Webhook endpoint. Default shape: a trigger that launches a
+            detached headless `fa --session <name>` run.
+        secret:
+          type: string
+          writeOnly: true
+          description: Shared secret for the webhook call; rotatable; never returned.
+        debounceSeconds:
+          type: integer
+          default: 300
+          minimum: 30
+          description: One dispatch per window while the agent stays offline.
+
+    WakeupRegistration:
+      type: object
+      required: [url, debounceSeconds]
+      properties:
+        url: { type: string, format: uri }
+        debounceSeconds: { type: integer }
+        createdAt: { type: string, format: date-time }
+
+    WakeupDispatch:
+      type: object
+      required: [agentId, at, outcome]
+      properties:
+        agentId: { type: string }
+        at: { type: string, format: date-time }
+        outcome:
+          type: string
+          enum: [delivered, target_down, skipped_online, backoff]
+        note: { type: string }

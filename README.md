@@ -121,6 +121,11 @@ FA_NETWORK_ADDR=:9000 go run ./cmd/server
 
 Health probe: `GET /healthz`.
 
+Interactive API docs ship with the binary: **Swagger UI at `/docs`**, the
+raw spec at `/openapi.yaml` (embedded copy of [`docs/openapi.yaml`](docs/openapi.yaml)
+from the same commit — regenerate via `go generate ./...`; a test guards
+drift). Works on any deploy URL out of the box.
+
 ## Deploy (Google Cloud Run)
 
 Automated: pushing to `main` (or manual **Run workflow**) triggers
