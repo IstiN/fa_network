@@ -50,6 +50,16 @@ gcloud run deploy fa-network \
   --set-env-vars FA_NETWORK_AUTH_BASE_URL=https://ai-native.cloud
 ```
 
+## API
+
+The full REST+WS contract lives in [`docs/openapi.yaml`](docs/openapi.yaml)
+(OpenAPI 3.0): networks (create/join), member roster, channels, opaque
+envelope relay, the `/ws` realtime event catalog, agents, and wake-up
+registration. Two-class access (`authJwt` for create/manage, `sessionToken`
+for members, agent-class guests) and the relay-only invariant (base64 opaque
+E2E envelopes the server never inspects) are encoded in the security
+schemes, schemas, and error codes.
+
 ## Quality gates
 
 Mirrors [dap](https://github.com/vabhzw17eg2qu4m9-bit/dap):
