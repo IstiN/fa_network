@@ -127,6 +127,56 @@ func (m *MemStore) InactiveNetworks(_ context.Context, cutoff time.Time) ([]stri
 	return out, nil
 }
 
+// PublicNetworks implements Networks.
+func (m *MemStore) PublicNetworks(_ context.Context, after time.Time, afterID string, limit int) ([]*model.Network, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var all []*model.Network
+	for _, n := range m.networks {
+		if n.Public {
+			all = append(all, n)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
+		}
+		return all[i].ID < all[j].ID
+	})
+	out := make([]*model.Network, 0, limit)
+	for _, n := range all {
+		if !after.IsZero() && !keysetAfter(n, after, afterID) {
+			continue
+		}
+		out = append(out, cloneNetwork(n))
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// keysetAfter reports whether n sorts strictly after the cursor.
+func keysetAfter(n *model.Network, after time.Time, afterID string) bool {
+	if !n.CreatedAt.Equal(after) {
+		return n.CreatedAt.After(after)
+	}
+	return n.ID > afterID
+}
+
+// MemberCount implements Networks.
+func (m *MemStore) MemberCount(_ context.Context, networkID string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for key := range m.members {
+		if hasNetworkPrefix(key, networkID) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // AllNetworks implements Networks.
 func (m *MemStore) AllNetworks(_ context.Context) ([]*model.Network, error) {
 	m.mu.RLock()

@@ -10,17 +10,17 @@ import (
 // CreateNetwork implements Networks.
 func (p *PGStore) CreateNetwork(ctx context.Context, n *model.Network) error {
 	_, err := p.db.ExecContext(ctx,
-		`INSERT INTO networks (id, name, owner_id, admins, public_channels, password_hash, password_salt, created_at, last_activity)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)`,
+		`INSERT INTO networks (id, name, owner_id, admins, public_channels, password_hash, password_salt, public, created_at, last_activity)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
 		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels),
-		n.PasswordHash, n.PasswordSalt, n.CreatedAt.UTC())
+		n.PasswordHash, n.PasswordSalt, n.Public, n.CreatedAt.UTC())
 	return mapErr(err)
 }
 
 func (p *PGStore) scanNetwork(row interface{ Scan(...any) error }) (*model.Network, error) {
 	var n model.Network
 	var admins, public []byte
-	err := row.Scan(&n.ID, &n.Name, &n.OwnerID, &admins, &public, &n.PasswordHash, &n.PasswordSalt, &n.CreatedAt)
+	err := row.Scan(&n.ID, &n.Name, &n.OwnerID, &admins, &public, &n.PasswordHash, &n.PasswordSalt, &n.Public, &n.CreatedAt)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -29,7 +29,7 @@ func (p *PGStore) scanNetwork(row interface{ Scan(...any) error }) (*model.Netwo
 	return &n, nil
 }
 
-const networkCols = `id, name, owner_id, admins, public_channels, password_hash, password_salt, created_at`
+const networkCols = `id, name, owner_id, admins, public_channels, password_hash, password_salt, public, created_at`
 
 // Network implements Networks.
 func (p *PGStore) Network(ctx context.Context, id string) (*model.Network, error) {
@@ -46,9 +46,30 @@ func (p *PGStore) NetworkByName(ctx context.Context, name string) (*model.Networ
 // UpdateNetwork implements Networks.
 func (p *PGStore) UpdateNetwork(ctx context.Context, n *model.Network) error {
 	res, err := p.db.ExecContext(ctx,
-		`UPDATE networks SET name=$2, owner_id=$3, admins=$4, public_channels=$5, password_hash=$6, password_salt=$7 WHERE id=$1`,
-		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels), n.PasswordHash, n.PasswordSalt)
+		`UPDATE networks SET name=$2, owner_id=$3, admins=$4, public_channels=$5, password_hash=$6, password_salt=$7, public=$8 WHERE id=$1`,
+		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels), n.PasswordHash, n.PasswordSalt, n.Public)
 	return mapExecErr(res, err)
+}
+
+// PublicNetworks implements Networks.
+func (p *PGStore) PublicNetworks(ctx context.Context, after time.Time, afterID string, limit int) ([]*model.Network, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT `+networkCols+` FROM networks WHERE public AND
+		 (created_at > $1 OR (created_at = $1 AND id > $2)) ORDER BY created_at, id LIMIT $3`,
+		after.UTC(), afterID, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	return p.scanNetworks(rows)
+}
+
+// MemberCount implements Networks.
+func (p *PGStore) MemberCount(ctx context.Context, networkID string) (int, error) {
+	var count int
+	err := p.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM members WHERE network_id=$1`, networkID).Scan(&count)
+	return count, mapErr(err)
 }
 
 // DeleteNetwork implements Networks.

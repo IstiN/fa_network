@@ -25,6 +25,7 @@ type NetworkWire struct {
 	OwnerID        string    `json:"ownerId"`
 	Admins         []string  `json:"admins,omitempty"`
 	PublicChannels []string  `json:"publicChannels"`
+	Public         bool      `json:"public"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -36,8 +37,18 @@ func NetworkWireOf(n *Network) NetworkWire {
 		OwnerID:        n.OwnerID,
 		Admins:         n.Admins,
 		PublicChannels: n.PublicChannels,
+		Public:         n.Public,
 		CreatedAt:      n.CreatedAt,
 	}
+}
+
+// PublicNetworkWire is the discovery-catalog projection: no secrets,
+// no membership material, no owner identity.
+type PublicNetworkWire struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	PublicChannels int    `json:"publicChannels"`
+	MemberCount    int    `json:"memberCount"`
 }
 
 // MemberWire is the roster projection.

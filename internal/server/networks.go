@@ -243,6 +243,7 @@ func (s *Server) getNetwork(w http.ResponseWriter, r *http.Request) {
 type networkUpdateRequest struct {
 	Name     *string `json:"name"`
 	Password *string `json:"password"`
+	Public   *bool   `json:"public"`
 }
 
 // patchNetwork implements PATCH (owner/admin, authed only — E9).
@@ -283,6 +284,9 @@ func (s *Server) applyNetworkUpdate(network *model.Network, req *networkUpdateRe
 			return false
 		}
 		network.Name = *req.Name
+	}
+	if req.Public != nil {
+		network.Public = *req.Public
 	}
 	return s.rotatePassword(network, req.Password)
 }

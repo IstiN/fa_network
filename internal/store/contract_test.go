@@ -215,6 +215,80 @@ func ContractTest(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("activity not cleared: %v", inactive)
 		}
 	})
+
+	t.Run("public catalog pagination and member count", func(t *testing.T) {
+		s := newStore(t)
+		defer s.Close(ctx)
+		base := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
+		mk := func(id, name string, at time.Time, public bool) {
+			n := &model.Network{ID: id, Name: name, OwnerID: "u1", Public: public, CreatedAt: at}
+			if err := s.CreateNetwork(ctx, n); err != nil {
+				t.Fatalf("create %s: %v", id, err)
+			}
+		}
+		mk("c1", "pub-one", base, true)
+		mk("c2", "priv-two", base.Add(time.Second), false)
+		mk("c3", "pub-three", base.Add(2*time.Second), true)
+
+		// Only opted-in networks, chronological order.
+		page, err := s.PublicNetworks(ctx, time.Time{}, "", 10)
+		if err != nil {
+			t.Fatalf("catalog: %v", err)
+		}
+		if len(page) != 2 || page[0].ID != "c1" || page[1].ID != "c3" {
+			t.Fatalf("catalog = %v, want [c1 c3]", idsOf(page))
+		}
+
+		// Keyset: continue strictly after the first entry.
+		rest, err := s.PublicNetworks(ctx, page[0].CreatedAt, page[0].ID, 10)
+		if err != nil {
+			t.Fatalf("catalog cursor: %v", err)
+		}
+		if len(rest) != 1 || rest[0].ID != "c3" {
+			t.Fatalf("cursor page = %v, want [c3]", idsOf(rest))
+		}
+
+		// Public flag round-trips through UpdateNetwork.
+		n, err := s.Network(ctx, "c2")
+		if err != nil {
+			t.Fatalf("get c2: %v", err)
+		}
+		n.Public = true
+		if err := s.UpdateNetwork(ctx, n); err != nil {
+			t.Fatalf("update c2: %v", err)
+		}
+		afterToggle, _ := s.PublicNetworks(ctx, time.Time{}, "", 10)
+		if len(afterToggle) != 3 {
+			t.Fatalf("catalog after toggle = %v, want 3 entries", idsOf(afterToggle))
+		}
+
+		// MemberCount reflects the roster.
+		for _, m := range []*model.Member{
+			{ID: "m1", NetworkID: "c1", Class: model.ClassOwner, DisplayName: "o"},
+			{ID: "m2", NetworkID: "c1", Class: model.ClassGuest, DisplayName: "g"},
+		} {
+			if err := s.UpsertMember(ctx, m); err != nil {
+				t.Fatalf("upsert member: %v", err)
+			}
+		}
+		count, err := s.MemberCount(ctx, "c1")
+		if err != nil || count != 2 {
+			t.Fatalf("memberCount = %d, %v; want 2", count, err)
+		}
+		empty, err := s.MemberCount(ctx, "c3")
+		if err != nil || empty != 0 {
+			t.Fatalf("empty memberCount = %d, %v; want 0", empty, err)
+		}
+	})
+}
+
+// idsOf projects network ids for test diagnostics.
+func idsOf(networks []*model.Network) []string {
+	out := make([]string, 0, len(networks))
+	for _, n := range networks {
+		out = append(out, n.ID)
+	}
+	return out
 }
 
 func TestMemStoreContract(t *testing.T) {

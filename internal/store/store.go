@@ -30,6 +30,13 @@ type Networks interface {
 	// since cutoff (retention sweeper input).
 	InactiveNetworks(ctx context.Context, cutoff time.Time) ([]string, error)
 	AllNetworks(ctx context.Context) ([]*model.Network, error)
+	// PublicNetworks lists opt-in catalog entries keyset-paginated by
+	// (createdAt, id): rows strictly after (after, afterID), oldest
+	// first. Zero after = first page. Callers pass limit+1 to detect
+	// a next page.
+	PublicNetworks(ctx context.Context, after time.Time, afterID string, limit int) ([]*model.Network, error)
+	// MemberCount reports how many members a network has (catalog stat).
+	MemberCount(ctx context.Context, networkID string) (int, error)
 }
 
 // Members persists per-network member identities.

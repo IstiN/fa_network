@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS networks (
   public_channels JSONB NOT NULL DEFAULT '[]',
   password_hash BYTEA NOT NULL,
   password_salt BYTEA NOT NULL,
+  public BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL,
   last_activity TIMESTAMPTZ NOT NULL
 );
@@ -89,6 +90,7 @@ CREATE INDEX IF NOT EXISTS dispatches_network_seq ON dispatches (network_id, seq
 
 // pgAlterStatements are idempotent additive migrations (IF NOT EXISTS).
 var pgAlterStatements = []string{
+	`ALTER TABLE networks ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT FALSE`,
 	`ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS sender_key TEXT NOT NULL DEFAULT ''`,
 }
 

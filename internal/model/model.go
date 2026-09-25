@@ -39,7 +39,10 @@ type Network struct {
 	OwnerID        string
 	Admins         []string
 	PublicChannels []string
-	CreatedAt      time.Time
+	// Public lists the network in the discovery catalog (opt-in
+	// metadata; listing never relaxes the join password).
+	Public    bool
+	CreatedAt time.Time
 	// PasswordHash is scrypt(salt, password), never returned by the API.
 	PasswordHash []byte
 	PasswordSalt []byte

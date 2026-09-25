@@ -157,6 +157,9 @@ paths:
           ignored (AC-B2, UT-3). Yields a stable dap identity.
         - **guest** (no JWT): `displayName` required; the joiner rides as an
           **agent-class identity** — same wire class as fa agents.
+
+        Catalogued (`public: true`) networks still require the password —
+        the catalog is discovery only, never open access.
         Wrong password → `403 invalid_credentials` with throttling (E1: no
         channel-existence oracle, `Retry-After` on repeated failures).
       security:
@@ -187,6 +190,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
+  /api/networks/public:
+    get:
+      tags: [networks]
+      summary: Public network catalog (anonymous)
+      description: |
+        Discovery catalog of networks whose owner/admin opted in via
+        `public: true` (PATCH /api/networks/{networkId}). Anonymous,
+        rate-limited, metadata only — no passwords, no owner identity, no
+        membership material. **Listing is discovery, not access:** joining
+        a catalogued network still requires its password through the
+        regular join endpoint (E1 throttling story unchanged).
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous page (malformed cursors restart at page one).
+          schema: { type: string }
+      responses:
+        '200':
+          description: Page of catalogued networks, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkCatalog'
         '429':
           $ref: '#/components/responses/Throttled'
 
@@ -713,6 +746,7 @@ components:
         password:
           type: string
           writeOnly: true
+        public: { type: boolean }
 
     JoinCredentials:
       type: object
@@ -722,6 +756,29 @@ components:
           type: string
           writeOnly: true
           description: Share out-of-band; grants guest-class join only.
+
+    PublicNetwork:
+      type: object
+      required: [id, name, publicChannels, memberCount]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        publicChannels:
+          type: integer
+          description: Number of public showcase channels in the network.
+        memberCount:
+          type: integer
+          description: Roster size (best-effort stat, never membership material).
+
+    NetworkCatalog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicNetwork'
+        nextCursor: { type: string }
 
     Network:
       type: object
@@ -736,6 +793,12 @@ components:
         publicChannels:
           type: array
           items: { type: string }
+        public:
+          type: boolean
+          default: false
+          description: |
+            Opt-in discovery catalog (GET /api/networks/public). Listing is
+            metadata only and never relaxes the join password.
         createdAt: { type: string, format: date-time }
 
     JoinRequest:
