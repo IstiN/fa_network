@@ -70,6 +70,7 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", Healthz)
+	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
 	mux.HandleFunc("GET /docs", serveDocs)
 	mux.HandleFunc("POST /api/networks", s.createNetwork)

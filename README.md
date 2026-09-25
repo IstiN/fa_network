@@ -121,6 +121,19 @@ FA_NETWORK_ADDR=:9000 go run ./cmd/server
 
 Health probe: `GET /healthz`.
 
+## Dev mode (offline, zero dependencies)
+
+`go run ./cmd/server` with no env at all gives you the full service:
+mock auth, in-memory store, offline hub stub (REST + WS work end to end).
+
+- Users: `mock_users.json` next to the binary —
+  `[{"login":"dev","password":"devpass","name":"Dev User"}]`
+  (plain or bcrypt passwords; file is re-read on change).
+- Dev token: `POST /api/dev/login {login, password}` → `{token}` —
+  **mock provider only, the route 404s under ai-native/oidc (never in prod)**.
+- Pin the dev signing key with `FA_NETWORK_MOCK_SECRET` if clients mint
+  tokens themselves (issuer `fa-network-mock`, HS256).
+
 Interactive API docs ship with the binary: **Swagger UI at `/docs`**, the
 raw spec at `/openapi.yaml` (embedded copy of [`docs/openapi.yaml`](docs/openapi.yaml)
 from the same commit — regenerate via `go generate ./...`; a test guards

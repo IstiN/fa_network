@@ -8,8 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"crypto/subtle"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"strings"
 )
 
 // MockUser is one login/pass entry of the dev provider.
@@ -110,7 +112,7 @@ func (m *MockProvider) IssueToken(login, password string) (string, error) {
 	m.mu.RLock()
 	u, ok := m.users[login]
 	m.mu.RUnlock()
-	if !ok || bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)) != nil {
+	if !ok || !passwordMatches(u.Password, password) {
 		return "", ErrInvalidToken
 	}
 	now := m.clock()
@@ -171,4 +173,14 @@ func (m *MockProvider) logins() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// passwordMatches accepts both bcrypt hashes ($2a$/...) and plain dev
+// passwords from mock_users.json — dev ergonomics over hardening for a
+// provider that never runs in production.
+func passwordMatches(stored, given string) bool {
+	if strings.HasPrefix(stored, "$2") {
+		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(given)) == nil
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(given)) == 1
 }
