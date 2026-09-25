@@ -64,7 +64,7 @@ jobs:
             --add-cloudsql-instances ai-native-478811:us-central1:learn-ai-db \
             --allow-unauthenticated \
             --set-env-vars FA_NETWORK_AUTH_PROVIDER=ai-native,FA_NETWORK_AUTH_BASE_URL=https://ai-native.cloud,FA_NETWORK_RETENTION_INACTIVITY_DAYS=30,FA_NETWORK_DAP_URL=wss://hub.fa1.dev/ws \
-            --set-secrets FA_NETWORK_DATABASE_URL=fa-network-database-url:latest,FA_NETWORK_WEBHOOK_SECRET=fa-network-webhook-secret:latest,FA_NETWORK_DAP_MASTER_SECRET=fa-network-dap-master-secret:latest,FA_NETWORK_AINATIVE_SECRET=fa-network-ainative-secret:latest
+            --set-secrets FA_NETWORK_DATABASE_URL=fa-network-database-url:latest,FA_NETWORK_WEBHOOK_SECRET=fa-network-webhook-secret:latest,FA_NETWORK_DAP_MASTER_SECRET=dap-hub-master-secret:latest,FA_NETWORK_AINATIVE_SECRET=fa-network-ainative-secret:latest
 
       - name: Service URL
         run: |
