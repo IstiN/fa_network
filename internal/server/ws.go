@@ -159,13 +159,14 @@ func parseWSSend(raw json.RawMessage) (string, envelopeInput, bool) {
 		ChannelID string   `json:"channelId"`
 		ID        string   `json:"id"`
 		Payload   string   `json:"payload"`
+		SenderKey string   `json:"senderKey"`
 		Mentions  []string `json:"mentions"`
 	}
 	var empty envelopeInput
 	if err := json.Unmarshal(raw, &f); err != nil || f.ChannelID == "" {
 		return "", empty, false
 	}
-	req := envelopeInput{ID: f.ID, Payload: f.Payload, Mentions: f.Mentions}
+	req := envelopeInput{ID: f.ID, Payload: f.Payload, SenderKey: f.SenderKey, Mentions: f.Mentions}
 	if !validEnvelopeInput(&req) {
 		return "", empty, false
 	}

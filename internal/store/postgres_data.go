@@ -45,10 +45,10 @@ func parseCursor(cursor string) (int64, error) {
 func (p *PGStore) AppendEnvelope(ctx context.Context, e *model.Envelope) (bool, error) {
 	var seq int64
 	err := p.db.QueryRowContext(ctx,
-		`INSERT INTO envelopes (channel_id, id, sender_id, payload, mentions, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6)
+		`INSERT INTO envelopes (channel_id, id, sender_id, payload, sender_key, mentions, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)
 		 ON CONFLICT (channel_id, id) DO NOTHING RETURNING seq`,
-		e.ChannelID, e.ID, e.SenderID, e.Payload, marshalJSON(e.Mentions), e.CreatedAt.UTC(),
+		e.ChannelID, e.ID, e.SenderID, e.Payload, e.SenderKey, marshalJSON(e.Mentions), e.CreatedAt.UTC(),
 	).Scan(&seq)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -62,7 +62,7 @@ func (p *PGStore) AppendEnvelope(ctx context.Context, e *model.Envelope) (bool, 
 // Envelopes implements Envelopes (ascending seq order; cursor = last seq).
 func (p *PGStore) Envelopes(ctx context.Context, channelID, cursor string, limit int) (*model.Page[model.Envelope], error) {
 	rows, err := p.querySeqPage(ctx,
-		`SELECT id, channel_id, sender_id, payload, mentions, created_at, seq
+		`SELECT id, channel_id, sender_id, payload, sender_key, mentions, created_at, seq
 		 FROM envelopes WHERE channel_id=$1`,
 		channelID, cursor, limit)
 	if err != nil {
@@ -96,7 +96,7 @@ func finishPage[T any](rows *sql.Rows, page *model.Page[T], limit int) (*model.P
 func scanEnvelopeRow(rows *sql.Rows, lastSeq *int64) (model.Envelope, error) {
 	var e model.Envelope
 	var mentions []byte
-	if err := rows.Scan(&e.ID, &e.ChannelID, &e.SenderID, &e.Payload, &mentions, &e.CreatedAt, lastSeq); err != nil {
+	if err := rows.Scan(&e.ID, &e.ChannelID, &e.SenderID, &e.Payload, &e.SenderKey, &mentions, &e.CreatedAt, lastSeq); err != nil {
 		return e, mapErr(err)
 	}
 	_ = unmarshalJSON(mentions, &e.Mentions)

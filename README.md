@@ -131,6 +131,9 @@ mock auth, in-memory store, offline hub stub (REST + WS work end to end).
   (plain or bcrypt passwords; file is re-read on change).
 - Dev token: `POST /api/dev/login {login, password}` → `{token}` —
   **mock provider only, the route 404s under ai-native/oidc (never in prod)**.
+- Seed: `./scripts/dev_seed.sh` — idempotent dev network `dev-net` /
+  password `dev-password` + `general` and public `showcase` channels, so a
+  guest join works with zero setup (documented in docs/openapi.yaml too).
 - Pin the dev signing key with `FA_NETWORK_MOCK_SECRET` if clients mint
   tokens themselves (issuer `fa-network-mock`, HS256).
 

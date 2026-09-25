@@ -85,6 +85,8 @@ type EnvelopeWire struct {
 	ID        string    `json:"id"`
 	ChannelID string    `json:"channelId"`
 	SenderID  string    `json:"senderId"`
+	// SenderKey: sender X25519 pubkey (base64), when known to the relay.
+	SenderKey string    `json:"senderKey,omitempty"`
 	Payload   string    `json:"payload"`
 	Mentions  []string  `json:"mentions,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -96,6 +98,7 @@ func EnvelopeWireOf(e *Envelope) EnvelopeWire {
 		ID:        e.ID,
 		ChannelID: e.ChannelID,
 		SenderID:  e.SenderID,
+		SenderKey: e.SenderKey,
 		Payload:   e.Payload,
 		Mentions:  e.Mentions,
 		CreatedAt: e.CreatedAt,

@@ -45,6 +45,45 @@ tags:
   - name: wakeups
 
 paths:
+  /api/dev/login:
+    post:
+      tags: [auth]
+      summary: Dev token endpoint (mock provider ONLY)
+      description: |
+        **Development only.** Exists solely when the service runs with
+        `FA_NETWORK_AUTH_PROVIDER=mock`; under ai-native/oidc the route
+        returns `404` (never available in production — two-class law).
+        Exchanges a mock login/password for a 24h HS256 dev JWT so UI
+        clients can exercise the full flow offline
+        (flutter_agent_harness#955). Not part of the production contract.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string }
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Dev JWT.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token:
+                    type: string
+        '401':
+          description: Unknown login or wrong password.
+        '404':
+          description: Not under the mock provider (production).
+
   /healthz:
     get:
       tags: [health]
@@ -823,6 +862,15 @@ components:
           description: Message id — client-generated UUID; dedup key (AC-B7).
         channelId: { type: string }
         senderId: { type: string }
+        senderKey:
+          type: string
+          description: |
+            OPTIONAL — sender X25519 pubkey (base64), present when known to
+            the relay (client-supplied via EnvelopeInput; hub-originated
+            envelopes may carry it from dap's public whois directory).
+            Directory metadata, never message content (law #1). Absent =
+            unknown — clients fall back to whois or a self-describing
+            payload wrapper (e.g. fanet1).
         payload:
           type: string
           description: |
@@ -845,6 +893,13 @@ components:
         id:
           type: string
           description: Client-generated UUID for at-least-once dedup.
+        senderKey:
+          type: string
+          description: |
+            OPTIONAL — sender's current X25519 pubkey (base64, <=64 raw
+            bytes). Lets channel members derive/reply without a whois
+            round-trip; stored and echoed verbatim. Directory metadata,
+            not content — the payload stays opaque.
         payload:
           type: string
           description: Base64 opaque E2E ciphertext.

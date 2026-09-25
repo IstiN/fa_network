@@ -13,9 +13,10 @@ import (
 const maxEnvelopePayloadBytes = 256 << 10
 
 type envelopeInput struct {
-	ID       string   `json:"id"`
-	Payload  string   `json:"payload"`
-	Mentions []string `json:"mentions,omitempty"`
+	ID        string   `json:"id"`
+	Payload   string   `json:"payload"`
+	SenderKey string   `json:"senderKey,omitempty"`
+	Mentions  []string `json:"mentions,omitempty"`
 }
 
 // getMessages implements GET /api/channels/{id}/messages — opaque envelope
@@ -73,6 +74,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		ID:        req.ID,
 		ChannelID: channel.ID,
 		SenderID:  idn.member.ID,
+		SenderKey: req.SenderKey,
 		Payload:   req.Payload,
 		Mentions:  model.DedupeMentions(req.Mentions),
 		CreatedAt: s.cfg.Now(),
@@ -133,7 +135,17 @@ func validEnvelopeInput(req *envelopeInput) bool {
 	if err != nil || len(raw) > maxEnvelopePayloadBytes {
 		return false
 	}
-	return true
+	return validSenderKey(req.SenderKey)
+}
+
+// validSenderKey: optional X25519 pubkey (base64, 32 raw bytes). Pure
+// directory metadata — the payload stays opaque.
+func validSenderKey(key string) bool {
+	if key == "" {
+		return true
+	}
+	raw, err := base64.StdEncoding.DecodeString(key)
+	return err == nil && len(raw) <= 64
 }
 
 func queryInt(r *http.Request, key string, fallback int) int {

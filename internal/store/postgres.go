@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS envelopes (
   id TEXT NOT NULL,
   sender_id TEXT NOT NULL,
   payload TEXT NOT NULL,
+  sender_key TEXT NOT NULL DEFAULT '',
   mentions JSONB NOT NULL DEFAULT '[]',
   created_at TIMESTAMPTZ NOT NULL,
   UNIQUE (channel_id, id)

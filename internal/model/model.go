@@ -69,6 +69,9 @@ type Envelope struct {
 	ID        string
 	ChannelID string
 	SenderID  string
+	// SenderKey is the sender's X25519 pubkey (base64) when known — public
+	// directory material (dap whois), never message content (law #1).
+	SenderKey string
 	Payload   string
 	Mentions  []string
 	CreatedAt time.Time
