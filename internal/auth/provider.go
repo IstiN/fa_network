@@ -33,7 +33,11 @@ func aiNativeFromEnv() (Provider, error) {
 	if base == "" {
 		return nil, fmt.Errorf("FA_NETWORK_AUTH_BASE_URL is required for ai-native auth")
 	}
-	return NewAINativeProvider(base), nil
+	secret := os.Getenv("FA_NETWORK_AUTH_AINATIVE_SECRET")
+	if secret == "" {
+		return nil, fmt.Errorf("FA_NETWORK_AUTH_AINATIVE_SECRET is required for ai-native auth (shared JWT_SECRET of the IstiN/auth deployment)")
+	}
+	return NewAINativeProvider(base, []byte(secret)), nil
 }
 
 func oidcFromEnv() (Provider, error) {

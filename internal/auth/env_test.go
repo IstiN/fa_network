@@ -20,6 +20,10 @@ func TestAuthFromEnv(t *testing.T) {
 		t.Fatal("ai-native without base URL must fail")
 	}
 	t.Setenv("FA_NETWORK_AUTH_BASE_URL", "https://ai-native.cloud")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("ai-native without shared secret must fail")
+	}
+	t.Setenv("FA_NETWORK_AUTH_AINATIVE_SECRET", "dev-secret-0123456789abcdef")
 	if _, err := FromEnv(); err != nil {
 		t.Fatalf("ai-native: %v", err)
 	}

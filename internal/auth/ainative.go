@@ -3,118 +3,117 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 )
 
-// AINativeProvider validates dmtools-compatible JWTs from ai-native.cloud
-// (IstiN/auth). It discovers the JWKS URL from the service's public config
-// endpoint and accepts both RS256 (prod) and HS256 (dev instances) tokens.
+// AINativeProvider validates dmtools-compatible JWTs from an IstiN/auth
+// deployment (github.com/IstiN/auth, e.g. https://ai-native.cloud). The
+// contract is symmetric HS256 with the deployment's shared JWT_SECRET —
+// there is no JWKS. iss must match the auth base host (tokens without iss
+// are accepted for legacy deployments, mirroring the issuer itself). The
+// locked display name is resolved from GET /api/auth/user and cached
+// briefly; on a lookup failure it degrades to the email subject.
 type AINativeProvider struct {
 	baseURL string
+	issuer  string
+	secret  []byte
 	http    *http.Client
-	jwks    *jwksCache
-	mu      sync.Mutex
-	once    bool
-	cfgErr  error
+
+	mu    sync.Mutex
+	names map[string]aiName
 }
 
-// NewAINativeProvider builds the provider for an auth service base URL.
-func NewAINativeProvider(baseURL string) *AINativeProvider {
+type aiName struct {
+	name  string
+	until time.Time
+}
+
+// aiNameTTL caps how stale a cached display name may be.
+const aiNameTTL = 5 * time.Minute
+
+// NewAINativeProvider builds the provider for an auth service base URL and
+// its shared JWT secret (exact bytes of the deployment's JWT_SECRET).
+func NewAINativeProvider(baseURL string, secret []byte) *AINativeProvider {
+	baseURL = strings.TrimRight(baseURL, "/")
+	u, _ := url.Parse(baseURL)
 	return &AINativeProvider{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseURL,
+		issuer:  u.Host,
+		secret:  secret,
 		http:    &http.Client{Timeout: 10 * time.Second},
-		jwks:    newJWKSCache("", nil),
+		names:   map[string]aiName{},
 	}
-}
-
-type authConfig struct {
-	JWKSURL   string `json:"jwksUrl"`
-	JwksURL   string `json:"jwks_url"`
-	DevSecret string `json:"devSecret"`
-}
-
-// ensureConfigured lazily discovers the verification material (once).
-func (a *AINativeProvider) ensureConfigured(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.once {
-		return a.cfgErr
-	}
-	a.once = true
-	a.cfgErr = a.discover(ctx)
-	return a.cfgErr
-}
-
-// discover fetches /api/auth/config for the JWKS URL (or dev secret).
-func (a *AINativeProvider) discover(ctx context.Context) error {
-	cfg, err := a.fetchConfig(ctx)
-	if err != nil {
-		return err
-	}
-	return a.applyConfig(cfg)
-}
-
-func (a *AINativeProvider) fetchConfig(ctx context.Context) (*authConfig, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		a.baseURL+"/api/auth/config", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := a.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("auth config: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("auth config: status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	var cfg authConfig
-	if err := json.Unmarshal(body, &cfg); err != nil {
-		return nil, fmt.Errorf("auth config parse: %w", err)
-	}
-	return &cfg, nil
-}
-
-func (a *AINativeProvider) applyConfig(cfg *authConfig) error {
-	jwks := cfg.JWKSURL
-	if jwks == "" {
-		jwks = cfg.JwksURL
-	}
-	if jwks == "" && cfg.DevSecret == "" {
-		return fmt.Errorf("auth config: no jwksUrl or devSecret")
-	}
-	a.jwks.url = jwks
-	if cfg.DevSecret != "" {
-		a.jwks.hsFallback = []byte(cfg.DevSecret)
-	}
-	return nil
 }
 
 // Validate implements Provider.
 func (a *AINativeProvider) Validate(ctx context.Context, token string) (*Principal, error) {
-	if err := a.ensureConfigured(ctx); err != nil {
+	parsed, err := validateToken(token, nil, [][]byte{a.secret})
+	if err != nil {
 		return nil, err
 	}
-	keys, err := a.jwks.rsaKeys(ctx)
-	if err != nil && len(a.jwks.hsFallback) == 0 {
-		return nil, err
+	claims := parsed
+	if claims.Issuer != "" && claims.Issuer != a.issuer {
+		return nil, invalid("issuer mismatch %q", claims.Issuer)
 	}
-	var hs [][]byte
-	if len(a.jwks.hsFallback) > 0 {
-		hs = [][]byte{a.jwks.hsFallback}
+	id := claims.UserID
+	if id == "" {
+		id = claims.Subject
 	}
-	claims, verr := validateToken(token, keys, hs)
-	if verr != nil {
-		return nil, verr
+	if id == "" {
+		return nil, invalid("missing sub claim")
 	}
-	return claimsToPrincipal(claims)
+	return &Principal{UserID: id, DisplayName: a.displayName(ctx, token, id, claims.Subject)}, nil
+}
+
+// displayName resolves the locked auth-service name, cached per user.
+func (a *AINativeProvider) displayName(ctx context.Context, token, id, fallback string) string {
+	a.mu.Lock()
+	cached, ok := a.names[id]
+	a.mu.Unlock()
+	if ok && time.Now().Before(cached.until) {
+		return cached.name
+	}
+	name := a.fetchUserName(ctx, token)
+	if name == "" {
+		name = fallback
+	}
+	a.mu.Lock()
+	a.names[id] = aiName{name: name, until: time.Now().Add(aiNameTTL)}
+	a.mu.Unlock()
+	return name
+}
+
+// fetchUserName reads GET /api/auth/user; empty on any failure (the name
+// cache degrades to the email subject, never to a hard failure).
+func (a *AINativeProvider) fetchUserName(ctx context.Context, token string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+"/api/auth/user", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ""
+	}
+	var profile struct {
+		Authenticated bool   `json:"authenticated"`
+		Name          string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &profile); err != nil || !profile.Authenticated {
+		return ""
+	}
+	return profile.Name
 }

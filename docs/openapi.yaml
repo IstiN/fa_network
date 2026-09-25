@@ -661,8 +661,9 @@ components:
       bearerFormat: JWT
       description: |
         ai-native JWT (github.com/IstiN/auth, dmtools-compatible access
-        token). Required for create/manage routes. Validated by fa_network;
-        never stored.
+        token: HS256 with the deployment's shared JWT_SECRET, iss = auth
+        host, sub = email, userId claim). Required for create/manage
+        routes. Validated by fa_network; never stored.
     sessionToken:
       type: http
       scheme: bearer

@@ -11,6 +11,8 @@ import (
 type Claims struct {
 	jwt.RegisteredClaims
 	Name string `json:"name,omitempty"`
+	// UserID is the dmtools/IstiN-auth userId claim (sub stays email).
+	UserID string `json:"userId,omitempty"`
 }
 
 func invalid(format string, args ...any) error {

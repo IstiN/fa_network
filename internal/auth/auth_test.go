@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,36 +164,98 @@ func TestOIDCProviderWithFakeIdP(t *testing.T) {
 	}
 }
 
-// The ai-native provider discovers JWKS from /api/auth/config.
-func TestAINativeProviderDiscovery(t *testing.T) {
-	key := newRSAKey(t)
+// The ai-native provider validates the real IstiN/auth contract: HS256
+// with the shared JWT_SECRET, iss = auth base host, locked display name
+// from GET /api/auth/user (cached).
+func TestAINativeProviderContract(t *testing.T) {
 	var base string
+	calls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/auth/config", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwksUrl": base + "/jwks"})
+	mux.HandleFunc("/api/auth/user", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("Authorization") != "Bearer "+strings.TrimSpace(currentTestToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"authenticated": true, "name": "Grace Hopper"})
 	})
-	mux.Handle("/jwks", rsaJWKSHandler(t, key))
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	base = server.URL
 
-	provider := NewAINativeProvider(server.URL)
+	provider := NewAINativeProvider(base, []byte("shared-jwt-secret"))
+	iss := strings.TrimPrefix(base, "http://")
 	claims := Claims{
+		UserID: "usr-42",
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "dev-1",
+			Issuer:    iss,
+			Subject:   "grace@example.com",
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
-		Name: "Grace Hopper",
 	}
-	principal, err := provider.Validate(context.Background(), signRS256(t, key, claims))
+	currentTestToken = signHS256(t, claims)
+	principal, err := provider.Validate(context.Background(), currentTestToken)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if principal.UserID != "dev-1" || principal.DisplayName != "Grace Hopper" {
+	if principal.UserID != "usr-42" || principal.DisplayName != "Grace Hopper" {
 		t.Fatalf("principal = %+v", principal)
 	}
-	// Config discovery is cached: a second validation must not refetch.
-	if _, err := provider.Validate(context.Background(), signRS256(t, key, claims)); err != nil {
+	// The display name is cached: a second validation must not refetch.
+	currentTestToken = signHS256(t, claims)
+	if _, err := provider.Validate(context.Background(), currentTestToken); err != nil {
 		t.Fatalf("second validate: %v", err)
 	}
+	if calls != 1 {
+		t.Fatalf("/api/auth/user calls = %d, want 1 (cached)", calls)
+	}
 }
+
+var currentTestToken string
+
+func signHS256(t *testing.T, claims Claims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := tok.SignedString([]byte("shared-jwt-secret"))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return signed
+}
+
+// Issuer and signature are enforced; a failing profile lookup degrades to
+// the email subject instead of rejecting the request.
+func TestAINativeProviderGuards(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/auth/user", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	provider := NewAINativeProvider(server.URL, []byte("shared-jwt-secret"))
+
+	good := Claims{RegisteredClaims: jwt.RegisteredClaims{
+		Issuer:    strings.TrimPrefix(server.URL, "http://"),
+		Subject:   "ada@example.com",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}}
+
+	if _, err := provider.Validate(context.Background(), signHS256(t, good)); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	wrongSecret := NewAINativeProvider(server.URL, []byte("other-secret"))
+	if _, err := wrongSecret.Validate(context.Background(), signHS256(t, good)); !IsInvalidToken(err) {
+		t.Fatalf("wrong secret err = %v, want invalid", err)
+	}
+	wrongIss := good
+	wrongIss.Issuer = "evil.example.com"
+	if _, err := provider.Validate(context.Background(), signHS256(t, wrongIss)); !IsInvalidToken(err) {
+		t.Fatalf("issuer mismatch err = %v, want invalid", err)
+	}
+	noIss := good
+	noIss.Issuer = ""
+	if _, err := provider.Validate(context.Background(), signHS256(t, noIss)); err != nil {
+		t.Fatalf("legacy token without iss rejected: %v", err)
+	}
+}
+
