@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS dispatches (
 CREATE INDEX IF NOT EXISTS dispatches_network_seq ON dispatches (network_id, seq);
 `
 
+// pgAlterStatements are idempotent additive migrations (IF NOT EXISTS).
+var pgAlterStatements = []string{
+	`ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS sender_key TEXT NOT NULL DEFAULT ''`,
+}
+
 // NewPostgres connects, verifies, and migrates a Postgres store.
 func NewPostgres(ctx context.Context, databaseURL string) (*PGStore, error) {
 	db, err := openPG(databaseURL)
@@ -114,11 +119,21 @@ func pingAndMigrate(ctx context.Context, db *sql.DB) (*PGStore, error) {
 }
 
 func migrate(ctx context.Context, db *sql.DB) (*PGStore, error) {
-	if _, err := db.ExecContext(ctx, pgSchema); err != nil {
+	if err := execAll(ctx, db, append([]string{pgSchema}, pgAlterStatements...)...); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &PGStore{db: db}, nil
+}
+
+// execAll runs each statement; the first error wins.
+func execAll(ctx context.Context, db *sql.DB, stmts ...string) error {
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close implements Store.
