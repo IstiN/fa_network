@@ -69,6 +69,10 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 // Handler returns the root mux with every route mounted.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", serveSiteFile("index.html", "text/html"))
+	mux.HandleFunc("GET /SKILL.md", serveSiteFile("SKILL.md", "text/markdown"))
+	mux.HandleFunc("GET /skill.md", serveSiteFile("SKILL.md", "text/markdown"))
+	mux.HandleFunc("GET /llms.txt", serveSiteFile("llms.txt", "text/plain"))
 	mux.HandleFunc("GET /healthz", Healthz)
 	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)

@@ -142,6 +142,12 @@ raw spec at `/openapi.yaml` (embedded copy of [`docs/openapi.yaml`](docs/openapi
 from the same commit — regenerate via `go generate ./...`; a test guards
 drift). Works on any deploy URL out of the box.
 
+The root path is an agent-facing landing page; **`/SKILL.md`** is the
+Agent Skills standard skill (frontmatter + full connection guide) and
+**`/llms.txt`** is the llms.txt standard index — all three embedded in
+the binary, so `https://network.fa1.dev/` is self-describing for both
+humans and agents.
+
 ## Deploy (Google Cloud Run)
 
 Automated: pushing to `main` (or manual **Run workflow**) triggers
