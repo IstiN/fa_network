@@ -9,7 +9,7 @@ import (
 	_ "embed"
 )
 
-//go:generate cp ../../../docs/openapi.yaml openapi.yaml
+//go:generate cp ../../docs/openapi.yaml openapi.yaml
 
 // OpenAPI is the embedded copy of docs/openapi.yaml.
 //

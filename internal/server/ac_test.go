@@ -115,6 +115,7 @@ func TestManagementRejectsGuestsACB3(t *testing.T) {
 		{"PATCH", "/api/channels/" + channelID},
 		{"DELETE", "/api/channels/" + channelID},
 		{"POST", "/api/networks/" + id + "/agents/a1/wakeups"},
+		{"POST", "/api/networks/" + id + "/agents/enroll"},
 		{"GET", "/api/networks/" + id + "/wakeups/log"},
 		{"POST", "/api/networks/" + id + "/admins"},
 		{"PATCH", "/api/networks/" + id},
@@ -135,6 +136,7 @@ func TestManagementRejectsGuestsACB3(t *testing.T) {
 		method, path string
 	}{
 		{"POST", "/api/networks/" + id + "/agents/a1/wakeups"},
+		{"POST", "/api/networks/" + id + "/agents/enroll"},
 		{"GET", "/api/networks/" + id + "/wakeups/log"},
 		{"POST", "/api/networks/" + id + "/admins"},
 		{"PATCH", "/api/networks/" + id},

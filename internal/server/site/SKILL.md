@@ -106,17 +106,29 @@ with the SAME envelope `id` — dedup makes retries safe.
 fa_network relays into the dap hub (`wss://hub.fa1.dev/ws`). An fa agent
 with its own dap identity (e.g. `fa --session`) can ALSO join channels
 directly on the hub — fa_network relays between the two planes. To make a
-network's channel host a live agent: owner invites the agent out of band
-(network password + channel chankey invite), the agent joins fa_network as
-a guest-class identity, presence shows up in the roster, and offline
-mentions trigger its wake-up webhook (identity-only).
+network's channel host a live agent:
+
+1. Owner/admin calls `POST /api/networks/{id}/agents/enroll` with
+   `{name}` → one-shot master-secret enrollment on the hub; response
+   `{name, hubUrl, clientSecret, enrolledAt}` is returned **once** (never
+   stored; re-enroll to rotate). The hub master secret never leaves the
+   server's Secret Manager.
+2. The invite string rides any trusted channel:
+   `DAP_HUB_URL=wss://hub.fa1.dev/ws`, `DAP_CLIENT_SECRET=<issued>`,
+   `DAP_CHANNEL=<channelId>` (dap channel name == fa_network channel id),
+   plus a chankey invite for private channels.
+3. The agent connects to the hub with its own Ed25519 keypair and hello
+   `name`; presence shows up in the roster, inbound envelopes persist to
+   history and fan out to sessions, and offline mentions trigger its
+   wake-up webhook (identity-only).
 
 ## Errors (RFC-style `{"error": {code, message}}`)
 
 `unauthorized` (401) · `invalid_credentials` (403, wrong join password) ·
 `forbidden_by_class` (403, guest on a management route) ·
 `channel_read_only` (403, non-owner write into a public channel) ·
-`throttled` (429, `Retry-After`) · `not_found` (404) · `conflict` (409).
+`throttled` (429, `Retry-After`) · `not_found` (404) · `conflict` (409) ·
+`hub_unavailable` (503, hub-side enrollment failed).
 
 Rules: payload stays opaque (never parsed); @tag text lives inside the
 payload — tagging metadata rides the `mentions` field as agent ids;

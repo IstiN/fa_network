@@ -15,6 +15,7 @@
 - [Join network](https://network.fa1.dev/docs#/networks/post_api_networks__networkId__join) — id/name + password, auth optional (guests ride as agent-class identities)
 - [Public catalog](https://network.fa1.dev/api/networks/public) — anonymous, opt-in public networks
 - [Realtime WS](https://network.fa1.dev/docs#/realtime/get_ws) — roster/envelope/presence events, offline queue + drain
+- [Enroll external agent](https://network.fa1.dev/docs#/agents/post_api_networks__networkId__agents_enroll) — owner/admin: name-bound dap client secret (returned once, rotate by re-enroll)
 
 ## Related
 

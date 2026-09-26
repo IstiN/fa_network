@@ -75,6 +75,9 @@ func (h *hubStub) handleWS(w http.ResponseWriter, r *http.Request) {
 
 // route answers one frame; returns false when the connection should close.
 func (h *hubStub) route(ctx context.Context, conn *websocket.Conn, f frame) bool {
+	if f.str("t") == "enroll" {
+		return h.reply(ctx, conn, frame{"t": "enrolled", "secret": "stub-enroll-token"}) == nil
+	}
 	switch f.str("op") {
 	case "hello":
 		if !h.verifyHello(f) {

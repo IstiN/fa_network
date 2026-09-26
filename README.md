@@ -121,6 +121,11 @@ FA_NETWORK_ADDR=:9000 go run ./cmd/server
 
 Health probe: `GET /healthz`.
 
+Agent onboarding (external pure-dap agents): owner/admin calls
+`POST /api/networks/{id}/agents/enroll {name}` → one-shot hub enrollment,
+returns `{name, hubUrl, clientSecret}` **once** (never stored; re-enroll
+rotates). The hub master secret never leaves Secret Manager.
+
 ## Dev mode (offline, zero dependencies)
 
 `go run ./cmd/server` with no env at all gives you the full service:

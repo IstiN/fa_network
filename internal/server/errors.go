@@ -15,6 +15,7 @@ const (
 	CodeThrottled       = "throttled"
 	CodeNotFound        = "not_found"
 	CodeConflict        = "conflict"
+	CodeHubUnavailable  = "hub_unavailable"
 )
 
 // Healthz answers the liveness probe with a static ok payload.

@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -31,6 +32,17 @@ func NewFakeClient(agentID string) *FakeClient {
 
 // AgentID implements Client.
 func (f *FakeClient) AgentID() string { return f.agentID }
+
+// EnrollAgent implements Client: deterministic fake secret per name.
+func (f *FakeClient) EnrollAgent(_ context.Context, name string) (string, error) {
+	if !f.Online() {
+		return "", fmt.Errorf("hub offline")
+	}
+	return "fake-secret-" + name, nil
+}
+
+// HubURL implements Client.
+func (f *FakeClient) HubURL() string { return "ws://fake-hub/ws" }
 
 // Online implements Client.
 func (f *FakeClient) Online() bool {

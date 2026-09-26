@@ -599,6 +599,48 @@ paths:
                 items:
                   $ref: '#/components/schemas/Agent'
 
+  /api/networks/{networkId}/agents/enroll:
+    post:
+      tags: [agents]
+      summary: Enroll an external (pure dap) agent (owner/admin)
+      description: |
+        Mints a **name-bound dap client secret** for an external agent that
+        talks dap/1 directly to the hub (no fa_network session). The server
+        performs a one-shot master-secret enrollment on the hub — the master
+        secret never leaves the server, and the issued client secret is
+        returned **exactly once** in this response (never stored). The agent
+        then connects with its own Ed25519 keypair, hello `name`, and this
+        secret (`DAP_CLIENT_SECRET`). Channel mapping is 1:1 — dap channel
+        name = fa_network channel id; private-channel keys still arrive only
+        via client-side chankey invites (the server never holds them).
+        Re-enrolling the same name ROTATES the secret (revocation path).
+        Guests and plain members are rejected by class (E9).
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentEnrollRequest'
+      responses:
+        '201':
+          description: Agent enrolled; secret shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentEnrollResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+        '503':
+          description: Hub unreachable — enrollment failed, retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/networks/{networkId}/agents/{agentId}/wakeups:
     get:
       tags: [wakeups]
@@ -773,6 +815,7 @@ components:
                 - throttled
                 - not_found
                 - conflict
+                - hub_unavailable
             message: { type: string }
 
     NetworkCreateRequest:
@@ -913,6 +956,31 @@ components:
           type: string
           enum: [live, busy, offline]
         wakeupRegistered: { type: boolean }
+
+    AgentEnrollRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{2,63}$'
+          description: dap hello name the secret is bound to (unique per agent).
+
+    AgentEnrollResponse:
+      type: object
+      required: [name, hubUrl, clientSecret, enrolledAt]
+      properties:
+        name: { type: string }
+        hubUrl:
+          type: string
+          description: Hub WS endpoint (DAP_HUB_URL for the agent env).
+        clientSecret:
+          type: string
+          description: |
+            Name-bound hub client secret — DAP_CLIENT_SECRET. Returned ONCE;
+            store it immediately (re-enroll rotates).
+        enrolledAt: { type: string, format: date-time }
+        note: { type: string }
 
     Channel:
       type: object

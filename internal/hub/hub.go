@@ -62,4 +62,10 @@ type Client interface {
 	Close(ctx context.Context) error
 	// Run serves the connection loop until ctx ends or Close.
 	Run(ctx context.Context) error
+	// EnrollAgent mints a name-bound client secret for an external agent
+	// (one-shot master-secret enrollment; secret returned once, never
+	// stored here). Re-enrolling a name rotates its secret.
+	EnrollAgent(ctx context.Context, name string) (string, error)
+	// HubURL is the hub endpoint for agent invite strings.
+	HubURL() string
 }
