@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/IstiN/fa_network/internal/model"
@@ -21,14 +22,26 @@ type envelopeInput struct {
 
 // getMessages implements GET /api/channels/{id}/messages — opaque envelope
 // history (AC-B4: payloads are ciphertext, this server never decrypts).
+// A public channel of a public network is also readable with NO token
+// (showcase browsing); every other anonymous case is the generic 404 so
+// no channel existence or class leaks (E1).
 func (s *Server) getMessages(w http.ResponseWriter, r *http.Request) {
 	channel := s.loadChannel(w, r)
 	if channel == nil {
 		return
 	}
+	if bearerToken(r) == "" {
+		s.serveShowcaseMessages(w, r, channel)
+		return
+	}
 	if s.resolveIdentity(w, r, channel.NetworkID) == nil {
 		return
 	}
+	s.writeEnvelopePage(w, r, channel)
+}
+
+// writeEnvelopePage renders one history page of envelope wires.
+func (s *Server) writeEnvelopePage(w http.ResponseWriter, r *http.Request, channel *model.Channel) {
 	limit := queryInt(r, "limit", 50)
 	if limit > 200 {
 		limit = 200
@@ -43,6 +56,29 @@ func (s *Server) getMessages(w http.ResponseWriter, r *http.Request) {
 		items = append(items, model.EnvelopeWireOf(&e))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "nextCursor": page.NextCursor})
+}
+
+// serveShowcaseMessages answers anonymous reads of public showcase
+// channels. Anything that is not (public channel && public network) gets
+// the generic 404 — indistinguishable from a nonexistent channel (E1).
+func (s *Server) serveShowcaseMessages(w http.ResponseWriter, r *http.Request, channel *model.Channel) {
+	ip := strings.Split(r.RemoteAddr, ":")[0]
+	if !s.limiter.Allow("showcase:"+ip, catalogRateMax, catalogRateWindow) {
+		writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "slow down", 60)
+		return
+	}
+	if !channel.Public || !s.networkIsPublic(r, channel.NetworkID) {
+		writeError(w, http.StatusNotFound, CodeNotFound, "unknown channel")
+		return
+	}
+	s.writeEnvelopePage(w, r, channel)
+}
+
+// networkIsPublic reports whether the network opted into the public
+// catalog (and therefore into anonymous showcase reads).
+func (s *Server) networkIsPublic(r *http.Request, networkID string) bool {
+	network, err := s.st.Network(r.Context(), networkID)
+	return err == nil && network.Public
 }
 
 // sendMessage implements POST — relay-accept with public-channel write

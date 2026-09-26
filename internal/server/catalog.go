@@ -53,6 +53,38 @@ func (s *Server) listPublicNetworks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": page.Items, "nextCursor": page.NextCursor})
 }
 
+// listShowcase implements GET /api/networks/{networkId}/showcase — the
+// anonymous browsing entry of a public network: its showcase channels.
+// Non-public (or unknown) networks return the generic 404 — no oracle (E1).
+func (s *Server) listShowcase(w http.ResponseWriter, r *http.Request) {
+	ip := strings.Split(r.RemoteAddr, ":")[0]
+	if !s.limiter.Allow("showcase:"+ip, catalogRateMax, catalogRateWindow) {
+		writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "slow down", 60)
+		return
+	}
+	network, err := s.st.Network(r.Context(), r.PathValue("networkId"))
+	if err != nil || !network.Public {
+		writeError(w, http.StatusNotFound, CodeNotFound, "unknown network")
+		return
+	}
+	channels, err := s.st.Channels(r.Context(), network.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "store error")
+		return
+	}
+	items := make([]map[string]string, 0, len(channels))
+	for _, c := range channels {
+		if c.Public {
+			items = append(items, map[string]string{"id": c.ID, "name": c.Name})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":       network.ID,
+		"name":     network.Name,
+		"channels": items,
+	})
+}
+
 // catalogWire projects one network into its catalog entry. The member
 // count is best-effort: a store hiccup on the stat yields 0, never a 500.
 func (s *Server) catalogWire(r *http.Request, n *model.Network) model.PublicNetworkWire {

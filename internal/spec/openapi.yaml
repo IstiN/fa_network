@@ -223,6 +223,44 @@ paths:
         '429':
           $ref: '#/components/responses/Throttled'
 
+  /api/networks/{networkId}/showcase:
+    get:
+      tags: [networks]
+      summary: Public showcase channels (anonymous)
+      description: |
+        Anonymous browsing entry of a **public** network (owner opt-in via
+        `public: true`): the list of its public showcase channels, readable
+        without join or password. Unknown or non-public networks return the
+        generic `404` — no existence oracle (E1). Channel history for these
+        channels is served by `GET /api/channels/{channelId}/messages`
+        without a token (same payload semantics as for members).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: Showcase channels of the network.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, name, channels]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  channels:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
   /api/networks/{networkId}:
     get:
       tags: [networks]
@@ -434,6 +472,13 @@ paths:
         Relay view of stored envelopes. Payloads are base64 opaque E2E
         ciphertext — decryption happens client-side (AC-B4: no plaintext on
         this server, ever).
+
+        **Anonymous showcase read:** a `public` channel of a `public`
+        network is served with NO token (public showcase browsing — the
+        channel is public by design). Every other anonymous case returns
+        the generic `404 not_found`, indistinguishable from an unknown
+        channel (E1: no existence oracle). A present-but-invalid token
+        keeps the usual `401`.
       parameters:
         - $ref: '#/components/parameters/ChannelId'
         - name: cursor
@@ -873,7 +918,10 @@ components:
         name: { type: string }
         public:
           type: boolean
-          description: Showcase mode — read for everyone, write owner/admin only.
+          description: |
+            Showcase mode — read for everyone, write owner/admin only.
+            Payloads in public channels are unencrypted by design (no
+            chankey exists); see Envelope.payload.
         acl:
           type: array
           items: { type: string }
@@ -938,8 +986,13 @@ components:
         payload:
           type: string
           description: |
-            Base64 opaque E2E ciphertext. The server never inspects or
-            transforms it; @tag text lives inside, client-side (AC-B3).
+            Base64 payload. In regular channels: opaque E2E ciphertext —
+            the server never inspects or transforms it; @tag text lives
+            inside, client-side (AC-B3). In public showcase channels of
+            public networks the payload is the base64 of the RAW message
+            JSON — a public channel has no chankey at all (server key
+            custody stays rejected; clients must not put secrets into
+            public channels).
         mentions:
           type: array
           items: { type: string }
