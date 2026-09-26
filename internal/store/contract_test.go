@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"errors"
 	"testing"
 	"time"
@@ -117,6 +118,8 @@ func ContractTest(t *testing.T, newStore func(t *testing.T) Store) {
 		if err != nil || stored {
 			t.Fatalf("dup append: %v stored=%v", err, stored)
 		}
+		// Chat order: no cursor = LATEST page; the cursor walks to older
+		// pages; items are ascending within each page.
 		page, err := s.Envelopes(ctx, "c1", "", 3)
 		if err != nil || len(page.Items) != 3 || page.NextCursor == "" {
 			t.Fatalf("page1: %v %+v", err, page)
@@ -124,6 +127,19 @@ func ContractTest(t *testing.T, newStore func(t *testing.T) Store) {
 		page2, err := s.Envelopes(ctx, "c1", page.NextCursor, 10)
 		if err != nil || len(page2.Items) != 2 || page2.NextCursor != "" {
 			t.Fatalf("page2: %v %+v", err, page2)
+		}
+		ids := func(page *model.Page[model.Envelope]) []string {
+			out := make([]string, 0, len(page.Items))
+			for _, e := range page.Items {
+				out = append(out, e.ID)
+			}
+			return out
+		}
+		if got := ids(page); fmt.Sprint(got) != "[e2 e3 e4]" {
+			t.Fatalf("latest page = %v, want [e2 e3 e4]", got)
+		}
+		if got := ids(page2); fmt.Sprint(got) != "[e0 e1]" {
+			t.Fatalf("cursor page = %v, want [e0 e1]", got)
 		}
 		// Relay-only: payloads round-trip untouched.
 		if page.Items[0].Payload != "Y2lwaGVydGV4dA==" {

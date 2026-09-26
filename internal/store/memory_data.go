@@ -29,33 +29,36 @@ func (m *MemStore) AppendEnvelope(_ context.Context, e *model.Envelope) (bool, e
 }
 
 // Envelopes implements Envelopes (ascending order, cursor = envelope seq).
-func (m *MemStore) Envelopes(_ context.Context, channelID, cursor string, limit int) (*model.Page[model.Envelope], error) {
+func (m *MemStore) Envelopes(_ context.Context, channelID, before string, limit int) (*model.Page[model.Envelope], error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	all := m.envs[channelID]
-	start := 0
-	if cursor != "" {
-		n, err := strconv.Atoi(cursor)
-		if err != nil || n < 0 || n > len(all) {
-			return nil, notFound("cursor", cursor)
-		}
-		start = n
-	}
 	if limit <= 0 {
 		limit = 50
 	}
-	page := model.Page[model.Envelope]{Items: []model.Envelope{}}
-	end := start + limit
-	if end > len(all) {
-		end = len(all)
+	// Chat order: no cursor = latest page; a cursor is the 1-based seq of
+	// the oldest item of the previous page — return the page strictly
+	// older than it.
+	end := len(all)
+	if before != "" {
+		n, err := strconv.Atoi(before)
+		if err != nil || n < 1 || n > len(all) {
+			return nil, notFound("cursor", before)
+		}
+		end = n - 1
 	}
+	start := end - limit
+	if start < 0 {
+		start = 0
+	}
+	page := model.Page[model.Envelope]{Items: []model.Envelope{}}
 	for _, e := range all[start:end] {
 		cp := e
 		cp.Mentions = append([]string(nil), e.Mentions...)
 		page.Items = append(page.Items, cp)
 	}
-	if end < len(all) {
-		page.NextCursor = strconv.Itoa(end)
+	if start > 0 {
+		page.NextCursor = strconv.Itoa(start + 1)
 	}
 	return &page, nil
 }

@@ -483,7 +483,12 @@ paths:
         - $ref: '#/components/parameters/ChannelId'
         - name: cursor
           in: query
-          description: Pagination cursor from a previous page.
+          description: |
+            Chat-order cursor from a previous page: **no cursor = the
+            LATEST page** (open a channel → see the newest messages); a
+            cursor returns the page strictly OLDER than the one you got
+            it from («load earlier»). Items are oldest→newest within a
+            page; `nextCursor` is empty when no older messages remain.
           schema: { type: string }
         - name: limit
           in: query

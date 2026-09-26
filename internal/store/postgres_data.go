@@ -60,16 +60,84 @@ func (p *PGStore) AppendEnvelope(ctx context.Context, e *model.Envelope) (bool, 
 }
 
 // Envelopes implements Envelopes (ascending seq order; cursor = last seq).
-func (p *PGStore) Envelopes(ctx context.Context, channelID, cursor string, limit int) (*model.Page[model.Envelope], error) {
-	rows, err := p.querySeqPage(ctx,
-		`SELECT id, channel_id, sender_id, payload, sender_key, mentions, created_at, seq
-		 FROM envelopes WHERE channel_id=$1`,
-		channelID, cursor, limit)
+func (p *PGStore) Envelopes(ctx context.Context, channelID, before string, limit int) (*model.Page[model.Envelope], error) {
+	query, args, err := envelopesDescQuery(channelID, before, limit)
 	if err != nil {
 		return nil, err
 	}
+	rows, err := p.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, mapErr(err)
+	}
 	defer rows.Close()
-	return scanEnvelopePage(rows, limit)
+	return scanEnvelopePageBefore(rows, effectiveLimit(limit))
+}
+
+// effectiveLimit normalizes the page size.
+func effectiveLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	return limit
+}
+
+// envelopesDescQuery builds the chat-order page query: no before = latest
+// page, before = the page strictly older than that seq.
+func envelopesDescQuery(channelID, before string, limit int) (string, []any, error) {
+	query := `SELECT id, channel_id, sender_id, payload, sender_key, mentions, created_at, seq
+		FROM envelopes WHERE channel_id=$1`
+	args := []any{channelID}
+	if before != "" {
+		c, err := parseCursor(before)
+		if err != nil {
+			return "", nil, err
+		}
+		query += ` AND seq < $2`
+		args = append(args, c)
+	}
+	limit = effectiveLimit(limit)
+	return query + ` ORDER BY seq DESC LIMIT $` + strconv.Itoa(len(args)+1),
+		append(args, limit+1), nil
+}
+
+// scanEnvelopePageBefore reads a DESC page into ascending chat order;
+// NextCursor is the seq of the oldest returned item (older pages follow).
+func scanEnvelopePageBefore(rows *sql.Rows, limit int) (*model.Page[model.Envelope], error) {
+	newest, seqs, err := collectDescRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return buildChatPage(newest, seqs, limit), nil
+}
+
+// collectDescRows drains the DESC query result (newest first).
+func collectDescRows(rows *sql.Rows) ([]model.Envelope, []int64, error) {
+	var newest []model.Envelope
+	var seqs []int64
+	for rows.Next() {
+		var seq int64
+		e, err := scanEnvelopeRow(rows, &seq)
+		if err != nil {
+			return nil, nil, err
+		}
+		newest = append(newest, e)
+		seqs = append(seqs, seq)
+	}
+	return newest, seqs, mapErr(rows.Err())
+}
+
+// buildChatPage trims the lookahead row and reverses into ascending chat
+// order; the cursor is the seq of the oldest returned item.
+func buildChatPage(newest []model.Envelope, seqs []int64, limit int) *model.Page[model.Envelope] {
+	page := &model.Page[model.Envelope]{Items: []model.Envelope{}}
+	if len(newest) > limit {
+		page.NextCursor = strconv.FormatInt(seqs[limit-1], 10)
+		newest = newest[:limit]
+	}
+	for i := len(newest) - 1; i >= 0; i-- {
+		page.Items = append(page.Items, newest[i])
+	}
+	return page
 }
 
 func scanEnvelopePage(rows *sql.Rows, limit int) (*model.Page[model.Envelope], error) {

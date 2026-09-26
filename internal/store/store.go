@@ -67,7 +67,10 @@ type Envelopes interface {
 	// AppendEnvelope stores e unless (channel, id) already exists
 	// (at-least-once dedup); returns stored=true when newly written.
 	AppendEnvelope(ctx context.Context, e *model.Envelope) (bool, error)
-	Envelopes(ctx context.Context, channelID, cursor string, limit int) (*model.Page[model.Envelope], error)
+	// Envelopes returns one history page in chat order: no cursor = the
+	// LATEST page, a cursor = the page strictly older than it. Items are
+	// ascending within the page; NextCursor points to older messages.
+	Envelopes(ctx context.Context, channelID, before string, limit int) (*model.Page[model.Envelope], error)
 	DeleteEnvelopesBefore(ctx context.Context, channelID string, cutoff time.Time) (int64, error)
 	DeleteEnvelopes(ctx context.Context, channelID string) error
 	// ChannelBytes is the per-channel stored-byte guard (abuse cap).
