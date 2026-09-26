@@ -44,10 +44,10 @@ func NewAINativeProvider(baseURL string, secret []byte, extraIssuers ...string) 
 	u, _ := url.Parse(baseURL)
 	return &AINativeProvider{
 		baseURL: baseURL,
-		// Every IstiN/auth build mints iss="ai-native" (the jwtutil.Issuer
-		// constant); the auth host is accepted forward-compat. Empty iss is
-		// always accepted (legacy deployments).
-		issuers: append([]string{"ai-native", u.Host}, extraIssuers...),
+		// Every IstiN/auth build mints iss="aiin-auth" (the jwtutil.Issuer
+		// constant); "ai-native" and the auth host are accepted
+		// forward-compat. Empty iss is always accepted (legacy deployments).
+		issuers: append([]string{"aiin-auth", "ai-native", u.Host}, extraIssuers...),
 		secret:  secret,
 		http:    &http.Client{Timeout: 10 * time.Second},
 		names:   map[string]aiName{},

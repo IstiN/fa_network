@@ -252,12 +252,17 @@ func TestAINativeProviderGuards(t *testing.T) {
 	if _, err := provider.Validate(context.Background(), signHS256(t, wrongIss)); !IsInvalidToken(err) {
 		t.Fatalf("issuer mismatch err = %v, want invalid", err)
 	}
-	// The canonical IstiN/auth issuer is the "ai-native" constant, not the
-	// host — real tokens carry it.
+	// The canonical IstiN/auth issuer is the "aiin-auth" constant (NOT the
+	// host) — real tokens carry it; "ai-native" is accepted forward-compat.
 	canonical := good
-	canonical.Issuer = "ai-native"
+	canonical.Issuer = "aiin-auth"
 	if _, err := provider.Validate(context.Background(), signHS256(t, canonical)); err != nil {
 		t.Fatalf("canonical iss rejected: %v", err)
+	}
+	compat := good
+	compat.Issuer = "ai-native"
+	if _, err := provider.Validate(context.Background(), signHS256(t, compat)); err != nil {
+		t.Fatalf("forward-compat iss rejected: %v", err)
 	}
 	noIss := good
 	noIss.Issuer = ""
