@@ -252,10 +252,24 @@ func TestAINativeProviderGuards(t *testing.T) {
 	if _, err := provider.Validate(context.Background(), signHS256(t, wrongIss)); !IsInvalidToken(err) {
 		t.Fatalf("issuer mismatch err = %v, want invalid", err)
 	}
+	// The canonical IstiN/auth issuer is the "ai-native" constant, not the
+	// host — real tokens carry it.
+	canonical := good
+	canonical.Issuer = "ai-native"
+	if _, err := provider.Validate(context.Background(), signHS256(t, canonical)); err != nil {
+		t.Fatalf("canonical iss rejected: %v", err)
+	}
 	noIss := good
 	noIss.Issuer = ""
 	if _, err := provider.Validate(context.Background(), signHS256(t, noIss)); err != nil {
 		t.Fatalf("legacy token without iss rejected: %v", err)
+	}
+	// Env override extends the accept-set.
+	custom := NewAINativeProvider(server.URL, []byte("shared-jwt-secret"), "custom.iss")
+	overridden := good
+	overridden.Issuer = "custom.iss"
+	if _, err := custom.Validate(context.Background(), signHS256(t, overridden)); err != nil {
+		t.Fatalf("extra issuer rejected: %v", err)
 	}
 }
 

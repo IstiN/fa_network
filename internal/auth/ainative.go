@@ -20,7 +20,7 @@ import (
 // briefly; on a lookup failure it degrades to the email subject.
 type AINativeProvider struct {
 	baseURL string
-	issuer  string
+	issuers []string
 	secret  []byte
 	http    *http.Client
 
@@ -38,12 +38,16 @@ const aiNameTTL = 5 * time.Minute
 
 // NewAINativeProvider builds the provider for an auth service base URL and
 // its shared JWT secret (exact bytes of the deployment's JWT_SECRET).
-func NewAINativeProvider(baseURL string, secret []byte) *AINativeProvider {
+// extraIssuers optionally extends the accepted iss set (env override).
+func NewAINativeProvider(baseURL string, secret []byte, extraIssuers ...string) *AINativeProvider {
 	baseURL = strings.TrimRight(baseURL, "/")
 	u, _ := url.Parse(baseURL)
 	return &AINativeProvider{
 		baseURL: baseURL,
-		issuer:  u.Host,
+		// Every IstiN/auth build mints iss="ai-native" (the jwtutil.Issuer
+		// constant); the auth host is accepted forward-compat. Empty iss is
+		// always accepted (legacy deployments).
+		issuers: append([]string{"ai-native", u.Host}, extraIssuers...),
 		secret:  secret,
 		http:    &http.Client{Timeout: 10 * time.Second},
 		names:   map[string]aiName{},
@@ -57,7 +61,7 @@ func (a *AINativeProvider) Validate(ctx context.Context, token string) (*Princip
 		return nil, err
 	}
 	claims := parsed
-	if claims.Issuer != "" && claims.Issuer != a.issuer {
+	if !a.issuerOK(claims.Issuer) {
 		return nil, invalid("issuer mismatch %q", claims.Issuer)
 	}
 	id := claims.UserID
@@ -68,6 +72,20 @@ func (a *AINativeProvider) Validate(ctx context.Context, token string) (*Princip
 		return nil, invalid("missing sub claim")
 	}
 	return &Principal{UserID: id, DisplayName: a.displayName(ctx, token, id, claims.Subject)}, nil
+}
+
+// issuerOK reports whether iss is in the accept-set; empty iss is
+// accepted for legacy tokens (the issuer itself does the same).
+func (a *AINativeProvider) issuerOK(iss string) bool {
+	if iss == "" {
+		return true
+	}
+	for _, want := range a.issuers {
+		if iss == want {
+			return true
+		}
+	}
+	return false
 }
 
 // displayName resolves the locked auth-service name, cached per user.
