@@ -75,6 +75,10 @@ type Envelope struct {
 	// SenderKey is the sender's X25519 pubkey (base64) when known — public
 	// directory material (dap whois), never message content (law #1).
 	SenderKey string
+	// SenderName is the enrolled hub display name of the sender when the
+	// relay knows it (presence cache) — a roster-ish render hint (issue #2),
+	// never message content.
+	SenderName string
 	Payload   string
 	Mentions  []string
 	CreatedAt time.Time

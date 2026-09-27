@@ -169,18 +169,31 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 		// impossible — drop (fa agents in channels fa_network never saw).
 		return
 	}
+	sender := msg.SenderID
+	if sender == "" {
+		sender = r.hub.AgentID() // legacy hub without `from` (issue #2, REG-3)
+	}
 	env := &model.Envelope{
-		ID:        msg.ID,
-		ChannelID: msg.ChannelID,
-		SenderID:  r.hub.AgentID(),
-		Payload:   msg.Payload,
-		CreatedAt: r.now(),
+		ID:         msg.ID,
+		ChannelID:  msg.ChannelID,
+		SenderID:   sender,
+		SenderName: r.hubAgentName(sender),
+		Payload:    msg.Payload,
+		CreatedAt:  r.now(),
 	}
 	stored, err := r.st.AppendEnvelope(ctx, env)
 	if err != nil || !stored {
 		return
 	}
 	r.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+}
+
+// hubAgentName resolves the enrolled display name of a hub agent from the
+// presence cache (empty when unknown).
+func (r *Relay) hubAgentName(agentID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hubAgents[agentID].Name
 }
 
 // updateHubAgent refreshes the agent presence cache and notifies watchers.

@@ -1056,6 +1056,14 @@ components:
             Directory metadata, never message content (law #1). Absent =
             unknown — clients fall back to whois or a self-describing
             payload wrapper (e.g. fanet1).
+        senderName:
+          type: string
+          description: |
+            Enrolled dap display name of the sender, when the relay knows it
+            (presence cache). For hub-originated messages senderId is the
+            true dap agentId from the frame `from` field (issue #2); for
+            fa_network-originated ones it is the member identity. Additive,
+            omitempty — display hint only, never an auth claim.
         payload:
           type: string
           description: |

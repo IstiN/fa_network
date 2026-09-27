@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS envelopes (
   sender_id TEXT NOT NULL,
   payload TEXT NOT NULL,
   sender_key TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
   mentions JSONB NOT NULL DEFAULT '[]',
   created_at TIMESTAMPTZ NOT NULL,
   UNIQUE (channel_id, id)
@@ -92,6 +93,7 @@ CREATE INDEX IF NOT EXISTS dispatches_network_seq ON dispatches (network_id, seq
 var pgAlterStatements = []string{
 	`ALTER TABLE networks ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT FALSE`,
 	`ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS sender_key TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS sender_name TEXT NOT NULL DEFAULT ''`,
 }
 
 // NewPostgres connects, verifies, and migrates a Postgres store.

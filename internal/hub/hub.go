@@ -16,6 +16,9 @@ type Envelope struct {
 	ID        string
 	Payload   string
 	CreatedAt time.Time
+	// SenderID is the dap agentId from the msg frame `from` field
+	// (empty for legacy hubs without it — callers fall back to the relay).
+	SenderID string
 }
 
 // PresenceInfo is one agent's presence snapshot from the hub.

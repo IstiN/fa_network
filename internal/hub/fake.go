@@ -88,6 +88,12 @@ func (f *FakeClient) Sent(channelID string) []Envelope {
 // Events implements Client.
 func (f *FakeClient) Events() <-chan Event { return f.events }
 
+// EmitPresence emits a presence transition event (test hook for the
+// relay's hub-agent name cache).
+func (f *FakeClient) EmitPresence(info PresenceInfo) {
+	f.emit(Event{Kind: EventPresence, At: time.Now(), AgentID: info.AgentID, Name: info.Name, Online: info.Online})
+}
+
 // EmitMsg injects an inbound hub envelope (test hook).
 func (f *FakeClient) EmitMsg(env Envelope) {
 	f.emit(Event{Kind: EventMsg, At: time.Now(), Msg: &env})

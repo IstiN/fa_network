@@ -265,6 +265,7 @@ func (d *DapClient) dispatch(f frame) {
 			ID:        f.str("id"),
 			Payload:   f.str("ciphertext"),
 			CreatedAt: ts,
+			SenderID:  f.str("from"),
 		}})
 	case "presence":
 		d.emitPresenceFrame(f)
