@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -48,15 +49,43 @@ type DapConfig struct {
 	URL          string // ws(s)://hub/ws
 	MasterSecret string
 	Name         string
+	// IdentitySeed (32 bytes) pins the Ed25519+X25519 keypair so the relay
+	// agentId (and its hub mailbox) survives restarts. Empty = ephemeral
+	// per boot (fine for tests, wrong for prod).
+	IdentitySeed []byte
+}
+
+// identityKeys derives the dap keypair: Ed25519 from the seed directly,
+// X25519 via the standard ed2curve seed expansion (sha512(seed)[:32],
+// clamped). Deterministic for a given seed; random when seed is empty.
+func identityKeys(seed []byte) (ed25519.PublicKey, ed25519.PrivateKey, *ecdh.PrivateKey, error) {
+	if len(seed) == 32 {
+		edPriv := ed25519.NewKeyFromSeed(seed)
+		digest := sha512.Sum512(seed)
+		xBytes := make([]byte, 32)
+		copy(xBytes, digest[:32])
+		xBytes[0] &= 248
+		xBytes[31] = (xBytes[31] & 127) | 64
+		xPriv, err := ecdh.X25519().NewPrivateKey(xBytes)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return edPriv.Public().(ed25519.PublicKey), edPriv, xPriv, nil
+	}
+	edPub, edPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	xPriv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return edPub, edPriv, xPriv, nil
 }
 
 // NewDapClient builds (but does not yet connect) the relay client.
 func NewDapClient(cfg DapConfig) (*DapClient, error) {
-	edPub, edPriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	xPriv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	edPub, edPriv, xPriv, err := identityKeys(cfg.IdentitySeed)
 	if err != nil {
 		return nil, err
 	}

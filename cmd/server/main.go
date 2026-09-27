@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"log"
 	"net/http"
@@ -96,12 +97,29 @@ func openHub() hub.Client {
 		URL:          url,
 		MasterSecret: os.Getenv("FA_NETWORK_DAP_SECRET"),
 		Name:         envOr("FA_NETWORK_DAP_NAME", "fa-network-relay"),
+		IdentitySeed: identitySeed(),
 	})
 	if err != nil {
 		log.Printf("hub: %v (using offline stub)", err)
 		return hub.NewFakeClient("r_offline")
 	}
 	return client
+}
+
+// identitySeed decodes FA_NETWORK_DAP_IDENTITY_SEED (base64, 32 bytes) —
+// a pinned relay identity so the hub agentId and its mailbox survive
+// restarts. Absent/invalid = ephemeral (logged; fine for dev, wrong for
+// prod).
+func identitySeed() []byte {
+	raw := os.Getenv("FA_NETWORK_DAP_IDENTITY_SEED")
+	seed, _ := base64.StdEncoding.DecodeString(raw)
+	if len(seed) == 32 {
+		return seed
+	}
+	if raw != "" {
+		log.Printf("hub: FA_NETWORK_DAP_IDENTITY_SEED must be base64 of 32 bytes (ephemeral identity)")
+	}
+	return nil
 }
 
 // envOr returns the environment variable value for key, or fallback when
