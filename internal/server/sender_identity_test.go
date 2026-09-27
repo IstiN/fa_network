@@ -99,3 +99,24 @@ func TestPresenceReseedOnReconnect(t *testing.T) {
 		t.Fatalf("SenderName = %q after reseed, want fa-agent", stored.SenderName)
 	}
 }
+
+// Regression (live incident 2026-09-27): on every hub (re)connect the
+// relay must re-join every known channel — subscriptions are
+// per-connection, otherwise the relay is deaf until an outbound send
+// lazily re-joins.
+func TestRelayRejoinsChannelsOnReconnect(t *testing.T) {
+	env := newTestEnv(t)
+	_, _, _, channelID, _ := setupNetwork(t, env)
+
+	env.hub.SetOnline(false)
+	env.hub.SetOnline(true)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if containsString(env.hub.Joined(), channelID) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("relay did not rejoin %s after reconnect: joined=%v", channelID, env.hub.Joined())
+}

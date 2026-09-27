@@ -21,6 +21,9 @@ type hubStub struct {
 	srv     *httptest.Server
 	mu      chan struct{}
 	sends   []frame
+	joins   int
+	conns   int
+	conn    *websocket.Conn
 	pubkey  string
 	verbose bool
 }
@@ -54,6 +57,15 @@ func (h *hubStub) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
+	h.mu <- struct{}{}
+	h.conns++
+	h.conn = conn
+	<-h.mu
+	defer func() {
+		h.mu <- struct{}{}
+		h.conn = nil
+		<-h.mu
+	}()
 	ctx := context.Background()
 	for {
 		_, raw, err := conn.Read(ctx)
@@ -86,6 +98,9 @@ func (h *hubStub) route(ctx context.Context, conn *websocket.Conn, f frame) bool
 		}
 		return h.reply(ctx, conn, frame{"op": "welcome", "agentId": "a_stub"}) == nil
 	case "join":
+		h.mu <- struct{}{}
+		h.joins++
+		<-h.mu
 		return h.reply(ctx, conn, frame{"op": "joined", "channel": f.str("channel")}) == nil
 	case "send":
 		h.record(f)
@@ -99,6 +114,30 @@ func (h *hubStub) route(ctx context.Context, conn *websocket.Conn, f frame) bool
 		return h.reply(ctx, conn, frame{"op": "flushed", "count": 0}) == nil
 	}
 	return true
+}
+
+// joinCount returns how many join frames arrived (all connections).
+func (h *hubStub) joinCount() int {
+	h.mu <- struct{}{}
+	defer func() { <-h.mu }()
+	return h.joins
+}
+
+// connCount returns how many WS connections were accepted.
+func (h *hubStub) connCount() int {
+	h.mu <- struct{}{}
+	defer func() { <-h.mu }()
+	return h.conns
+}
+
+// drop force-closes the current connection (simulates a network cut).
+func (h *hubStub) drop() {
+	h.mu <- struct{}{}
+	c := h.conn
+	<-h.mu
+	if c != nil {
+		c.CloseNow()
+	}
 }
 
 func (h *hubStub) record(f frame) {
@@ -275,4 +314,39 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool, what string)
 
 func base64StdDecode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
+}
+
+// Regression (live incident 2026-09-27): channel subscriptions are
+// per-connection — after a reconnect the join ledger resets and the next
+// send re-joins on the NEW connection (previously the ledger survived and
+// the client stayed deaf/muted forever).
+func TestDapRejoinAfterReconnect(t *testing.T) {
+	stub := newHubStub(t)
+	client, err := NewDapClient(DapConfig{
+		URL: stub.url(), MasterSecret: "test-master-secret", Name: "relay-x",
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	client.backoffInit = time.Millisecond
+	client.backoffMax = 5 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = client.Run(ctx) }()
+	defer client.Close(context.Background())
+	waitFor(t, 3*time.Second, client.Online, "online")
+
+	send := func(id string) {
+		if err := client.Send(ctx, Envelope{ChannelID: "c1", ID: id, Payload: "QQ==", CreatedAt: time.Now()}); err != nil {
+			t.Fatalf("send %s: %v", id, err)
+		}
+	}
+	send("m-1")
+	waitFor(t, 3*time.Second, func() bool { return stub.joinCount() == 1 }, "first join")
+
+	stub.drop()
+	waitFor(t, 3*time.Second, func() bool { return stub.connCount() == 2 }, "reconnect")
+
+	send("m-2")
+	waitFor(t, 3*time.Second, func() bool { return stub.joinCount() == 2 }, "re-join on new connection")
 }

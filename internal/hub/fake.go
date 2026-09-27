@@ -17,6 +17,7 @@ type FakeClient struct {
 	sent     map[string][]Envelope
 	events   chan Event
 	presence []PresenceInfo
+	joined   map[string]bool
 	closed   bool
 }
 
@@ -27,6 +28,7 @@ func NewFakeClient(agentID string) *FakeClient {
 		online:  true,
 		sent:    map[string][]Envelope{},
 		events:  make(chan Event, 64),
+		joined:  map[string]bool{},
 	}
 }
 
@@ -87,6 +89,25 @@ func (f *FakeClient) Sent(channelID string) []Envelope {
 
 // Events implements Client.
 func (f *FakeClient) Events() <-chan Event { return f.events }
+
+// Join implements Client (records the subscription for assertions).
+func (f *FakeClient) Join(_ context.Context, channel string) error {
+	f.mu.Lock()
+	f.joined[channel] = true
+	f.mu.Unlock()
+	return nil
+}
+
+// Joined returns the channels joined so far (test hook).
+func (f *FakeClient) Joined() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.joined))
+	for c := range f.joined {
+		out = append(out, c)
+	}
+	return out
+}
 
 // EmitPresence emits a presence transition event (test hook for the
 // relay's hub-agent name cache).

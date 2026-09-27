@@ -73,6 +73,7 @@ func (r *Relay) handleEvent(ctx context.Context, ev hub.Event) {
 		r.sessions.Broadcast(networkOfflineWire{Reason: "hub unreachable"})
 	case hub.EventOnline:
 		r.setOnline(true)
+		r.joinAllChannels(ctx)
 		r.seedHubPresence(ctx)
 		count := r.drainAll(ctx)
 		r.sessions.Broadcast(networkDrainWire{Count: count})
@@ -193,6 +194,36 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 		return // id-dedup: already stored (AC3)
 	}
 	r.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+}
+
+// joinAllChannels (re)subscribes the fresh hub connection to every known
+// channel. Hub subscriptions are per-connection — without this the relay
+// is deaf to inbound after every reconnect/restart until someone happens
+// to send outbound (lazily joined in the dap client).
+func (r *Relay) joinAllChannels(ctx context.Context) {
+	networks, err := r.st.AllNetworks(ctx)
+	if err != nil {
+		log.Printf("relay: channel rejoin: list networks: %v", err)
+		return
+	}
+	for _, n := range networks {
+		r.joinNetworkChannels(ctx, n.ID)
+	}
+}
+
+// joinNetworkChannels joins every channel of one network (per network to
+// keep the loop simple and logged per failure).
+func (r *Relay) joinNetworkChannels(ctx context.Context, networkID string) {
+	channels, err := r.st.Channels(ctx, networkID)
+	if err != nil {
+		log.Printf("relay: channel rejoin: list channels of %s: %v", networkID, err)
+		return
+	}
+	for _, ch := range channels {
+		if err := r.hub.Join(ctx, ch.ID); err != nil {
+			log.Printf("relay: channel rejoin: join %s: %v", ch.ID, err)
+		}
+	}
 }
 
 // seedHubPresence repopulates the hub-agent roster after every (re)connect

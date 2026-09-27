@@ -195,6 +195,12 @@ func (d *DapClient) connectOnce(ctx context.Context) error {
 	if err := d.hello(ctx, conn); err != nil {
 		return err
 	}
+	// Channel subscriptions are per-connection: reset the join ledger so
+	// callers re-join on this connection (relay re-joins all channels on
+	// EventOnline; sends re-join lazily via ensureJoined).
+	d.joinedMu.Lock()
+	d.joined = map[string]bool{}
+	d.joinedMu.Unlock()
 	d.setOnline(true)
 	d.emit(Event{Kind: EventOnline, At: d.now()})
 	if err := d.writeFrame(ctx, conn, frame{"op": "flush"}); err != nil {
@@ -361,6 +367,17 @@ func (d *DapClient) Send(ctx context.Context, env Envelope) error {
 	}
 	send["sig"] = sig
 	return d.writeFrame(ctx, conn, send)
+}
+
+// Join implements Client: joins the channel on the current connection.
+func (d *DapClient) Join(ctx context.Context, channel string) error {
+	d.connMu.Lock()
+	conn := d.conn
+	d.connMu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("dap: not connected")
+	}
+	return d.ensureJoined(ctx, conn, channel)
 }
 
 // ensureJoined joins the channel exactly once per connection lifetime.

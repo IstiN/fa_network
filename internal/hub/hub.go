@@ -61,6 +61,9 @@ type Client interface {
 	Events() <-chan Event
 	// Presence returns the current hub agent roster.
 	Presence(ctx context.Context) ([]PresenceInfo, error)
+	// Join subscribes this connection to a channel (idempotent per
+	// connection; must be re-issued after every reconnect).
+	Join(ctx context.Context, channel string) error
 	// Close terminates the connection loop.
 	Close(ctx context.Context) error
 	// Run serves the connection loop until ctx ends or Close.
