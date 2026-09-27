@@ -986,7 +986,13 @@ components:
       type: object
       required: [id, networkId, public]
       properties:
-        id: { type: string }
+        id:
+          type: string
+          description: >-
+            Unstable identifier: a channel recreated with the same name gets a
+            new random id, and previously issued ids/invites go stale. Resolve
+            the current id by channel name via
+            GET /api/networks/{id}/channels at join time.
         networkId: { type: string }
         name: { type: string }
         public:
