@@ -74,3 +74,28 @@ func waitEnvelope(t *testing.T, env *testEnv, channelID, id string) *model.Envel
 	t.Fatalf("envelope %s never stored", id)
 	return nil
 }
+
+// Presence reseed on reconnect: an agent whose presence transition happened
+// while the relay was down must still resolve senderName — the relay
+// re-queries the hub roster on every reconnect (EventOnline).
+func TestPresenceReseedOnReconnect(t *testing.T) {
+	env := newTestEnv(t)
+	_, _, _, channelID, _ := setupNetwork(t, env)
+
+	// The agent is known to the hub roster but the relay never saw a
+	// presence EVENT for it (connected while relay was down).
+	env.hub.SetPresence([]hub.PresenceInfo{{AgentID: "a_stable", Name: "fa-agent", Online: true}})
+
+	// Simulate a hub reconnect cycle.
+	env.hub.SetOnline(false)
+	env.hub.SetOnline(true)
+
+	msg := hubEnvelope(channelID, "hub-s3", "cmVzZWVk")
+	msg.SenderID = "a_stable"
+	env.hub.EmitMsg(msg)
+
+	stored := waitEnvelope(t, env, channelID, "hub-s3")
+	if stored.SenderName != "fa-agent" {
+		t.Fatalf("SenderName = %q after reseed, want fa-agent", stored.SenderName)
+	}
+}

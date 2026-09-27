@@ -73,6 +73,7 @@ func (r *Relay) handleEvent(ctx context.Context, ev hub.Event) {
 		r.sessions.Broadcast(networkOfflineWire{Reason: "hub unreachable"})
 	case hub.EventOnline:
 		r.setOnline(true)
+		r.seedHubPresence(ctx)
 		count := r.drainAll(ctx)
 		r.sessions.Broadcast(networkDrainWire{Count: count})
 	}
@@ -192,6 +193,24 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 		return // id-dedup: already stored (AC3)
 	}
 	r.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+}
+
+// seedHubPresence repopulates the hub-agent roster after every (re)connect
+// so senderName resolution also covers agents whose presence transitions
+// happened while the relay was down (restart, deploy).
+func (r *Relay) seedHubPresence(ctx context.Context) {
+	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	agents, err := r.hub.Presence(qctx)
+	if err != nil {
+		log.Printf("relay: hub presence reseed failed: %v", err)
+		return
+	}
+	r.mu.Lock()
+	for _, a := range agents {
+		r.hubAgents[a.AgentID] = a
+	}
+	r.mu.Unlock()
 }
 
 // hubAgentName resolves the enrolled display name of a hub agent from the
