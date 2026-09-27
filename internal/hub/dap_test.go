@@ -346,6 +346,9 @@ func TestDapRejoinAfterReconnect(t *testing.T) {
 
 	stub.drop()
 	waitFor(t, 3*time.Second, func() bool { return stub.connCount() == 2 }, "reconnect")
+	// conn accepted != hello completed: wait for the client to be online
+	// again before sending (CI timing exposed the race).
+	waitFor(t, 3*time.Second, client.Online, "online after reconnect")
 
 	send("m-2")
 	waitFor(t, 3*time.Second, func() bool { return stub.joinCount() == 2 }, "re-join on new connection")
