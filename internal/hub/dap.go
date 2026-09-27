@@ -98,7 +98,7 @@ func NewDapClient(cfg DapConfig) (*DapClient, error) {
 		edPriv:      edPriv,
 		edPubB64:    base64.StdEncoding.EncodeToString(edPub),
 		xPubB64:     base64.RawStdEncoding.EncodeToString(xPriv.PublicKey().Bytes()),
-		events:      make(chan Event, 64),
+		events:      make(chan Event, 1024),
 		joined:      map[string]bool{},
 		closed:      make(chan struct{}),
 		backoffInit: time.Second,

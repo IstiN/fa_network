@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -167,6 +168,7 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 	if err != nil {
 		// Unknown to fa_network: persist under its own id space is
 		// impossible — drop (fa agents in channels fa_network never saw).
+		log.Printf("relay: inbound drop: unknown hub channel %q (msg %s)", msg.ChannelID, msg.ID)
 		return
 	}
 	sender := msg.SenderID
@@ -182,8 +184,12 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 		CreatedAt:  r.now(),
 	}
 	stored, err := r.st.AppendEnvelope(ctx, env)
-	if err != nil || !stored {
+	if err != nil {
+		log.Printf("relay: inbound store error for msg %s: %v", msg.ID, err)
 		return
+	}
+	if !stored {
+		return // id-dedup: already stored (AC3)
 	}
 	r.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
 }
