@@ -20,7 +20,13 @@ const (
 // serveWS implements GET /ws — the realtime session (WebSocket upgrade).
 // Auth: Bearer <sessionToken> from join. One socket per session.
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
+	// Browser WebSocket cannot set Authorization; a session token may ride
+	// in ?token= (server logs never carry it further — the wire is the
+	// upgrade request only).
 	token := bearerToken(r)
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
 	if token == "" {
 		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "session token required")
 		return

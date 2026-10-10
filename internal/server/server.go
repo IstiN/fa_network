@@ -24,6 +24,8 @@ type Config struct {
 	RetentionSweepInterval time.Duration
 	// Now is the clock (tests pin it).
 	Now func() time.Time
+	// CORSOrigins allow the browser app hosts (empty = no browser CORS).
+	CORSOrigins []string
 }
 
 // Server is the fa_network edge: REST + WS over one mux.
@@ -36,6 +38,7 @@ type Server struct {
 	relay     *Relay
 	sessions  *SessionRegistry
 	limiter   *RateLimiter
+	corsOrigins []string
 	passwords *Passwords
 	failures  *FailureTracker
 }
@@ -63,7 +66,23 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		failures:  NewFailureTracker(),
 	}
 	s.relay = NewRelay(st, hubClient, s.sessions, dispatcher, cfg.Now)
+	if len(cfg.CORSOrigins) == 0 {
+		cfg.CORSOrigins = defaultCORSOrigins()
+	}
+	s.corsOrigins = cfg.CORSOrigins
 	return s
+}
+
+// defaultCORSOrigins covers the shipped fa1.dev surfaces plus local dev.
+func defaultCORSOrigins() []string {
+	return []string{
+		"https://fa1.dev",
+		"https://network.fa1.dev",
+		"http://localhost:3000",
+		"http://localhost:5173",
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+	}
 }
 
 // Handler returns the root mux with every route mounted.
@@ -101,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/networks/{networkId}/agents/{agentId}/wakeups", s.removeWakeup)
 	mux.HandleFunc("GET /api/networks/{networkId}/wakeups/log", s.wakeupLog)
 	mux.HandleFunc("GET /ws", s.serveWS)
-	return mux
+	return newCORS(s.corsOrigins, mux)
 }
 
 // RunRelay starts background loops (hub event pump, retention sweeper).

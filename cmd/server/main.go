@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"context"
 	"encoding/base64"
 	"flag"
@@ -59,6 +60,7 @@ func buildServer(st store.Store) *server.Server {
 		RetentionInactivityDays: envInt("FA_NETWORK_RETENTION_INACTIVITY_DAYS", 30),
 		ChannelBytesCap:         envInt64("FA_NETWORK_RETENTION_CHANNEL_BYTES", 256<<20),
 		RetentionSweepInterval:  envDuration("FA_NETWORK_RETENTION_SWEEP_INTERVAL", time.Hour),
+		CORSOrigins:             envCSV("FA_NETWORK_CORS_ORIGINS"),
 	})
 }
 
@@ -147,6 +149,21 @@ func envInt64(key string, fallback int64) int64 {
 		}
 	}
 	return fallback
+}
+
+// envCSV splits a comma-separated env var (empty → nil).
+func envCSV(key string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	out := []string{}
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {
