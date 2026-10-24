@@ -47,6 +47,7 @@ tags:
   - name: realtime
   - name: agents
   - name: wakeups
+  - name: webhooks
 
 paths:
   /api/dev/login:
@@ -105,6 +106,109 @@ paths:
                   status:
                     type: string
                     enum: [ok]
+
+  /api/webhooks/{provider}:
+    post:
+      tags: [webhooks]
+      summary: Universal SCM/CI webhook ingress & agent wake-up (issue #3)
+      description: |
+        Public, signature-verified ingress that routes an external trigger
+        either to a live DAP agent or to the universal CI worker
+        (`fa-universal.yml`). No session JWT — authenticity is the
+        provider secret; a missing configured secret fails closed (401).
+
+        **Authentication per provider** (fallback for all secrets:
+        `FA_NETWORK_WEBHOOK_SECRET`):
+        - `github`: `X-Hub-Signature-256` HMAC-SHA256 (`sha256=<hex>`) with
+          `FA_WEBHOOK_GITHUB_SECRET`. `X-GitHub-Event: ping` returns
+          `200 {"ok":true,"event":"ping"}`. Supported events:
+          `issue_comment` / `pull_request_review_comment` (`created`),
+          `pull_request_review` (`submitted`), `issues` (`opened`,
+          `assigned` to the configured bot), `pull_request` (`opened`).
+        - `gitlab`: `X-Gitlab-Token` (constant-time) with
+          `FA_WEBHOOK_GITLAB_SECRET`. Supported: `Note Hook` (MR/Issue),
+          `Issue Hook` / `Merge Request Hook` (`action == open`).
+        - `bitbucket`: `X-Hub-Signature` HMAC-SHA256 with
+          `FA_WEBHOOK_BITBUCKET_SECRET`. Supported:
+          `pullrequest:comment_created`, `issue:comment_created`,
+          `pullrequest:created`.
+        - `generic`: `Authorization: Bearer`, `X-Fa-Webhook-Token`, or
+          `X-Fa-Network-Signature` HMAC with `FA_WEBHOOK_GENERIC_SECRET`.
+          Direct trigger contract (GenericTriggerInput) — no mention
+          filter (the caller already authenticated).
+
+        **Filtering:** bot authors are ignored (`{"status":"ignored",
+        "reason":"bot_author"}` — loop prevention, `FA_TRIGGER_BOT_LOGINS`,
+        `FA_TRIGGER_ALLOW_BOTS`). SCM text events require the `@fa` /
+        `/fa` mention (`FA_TRIGGER_MENTION`), otherwise
+        `{"status":"ignored","reason":"no_mention"}` with zero side
+        effects. Session keys are deterministic DNS-label-like strings:
+        `gh-<owner>-<repo>-<number>`, `gl-<project>-<iid>`,
+        `bb-<workspace>-<repo>-<id>` (or a sanitized custom `sessionKey`).
+
+        **Routing:** when a DAP agent is online by `AgentID` or by
+        `Name == sessionKey`, the event is accepted for live processing
+        (`200`, `mode=live`) and a 5-second grace-window guard
+        (`FA_TRIGGER_GRACE_PERIOD`) fires the CI wake-up if the agent
+        drops offline; `FA_TRIGGER_ALWAYS_DISPATCH_FALLBACK=true` forces
+        the CI dispatch even while online. Offline agents get an
+        immediate CI wake-up (`202`, `mode=ci_wakeup`) via GitHub Actions
+        `workflow_dispatch` (GitHub App or PAT), GitLab pipeline trigger,
+        or Bitrise build trigger. GitHub comments receive a best-effort
+        `👀` reaction when GitHub credentials are configured.
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab, bitbucket, generic]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/GenericTriggerInput'
+                - type: object
+                  description: Native provider webhook payload (GitHub/GitLab/Bitbucket JSON).
+      responses:
+        '200':
+          description: |
+            `ping`, an ignored event (`status=ignored` + `reason`), or a
+            trigger accepted for a live online agent (`status=accepted`,
+            `mode=live`, `agentId`) with the grace-window guard armed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookResult' }
+        '202':
+          description: CI wake-up dispatched (`status=dispatched`, `mode=ci_wakeup`, `backend`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookResult' }
+        '400':
+          description: Malformed payload or missing generic trigger coordinates.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Missing/invalid webhook signature or token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: The CI backend rejected the wake-up (`wakeup_failed`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: |
+            `wakeup_not_configured` (no CI backend credentials) or
+            `webhooks_not_configured` (ingress bridge disabled).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/networks:
     post:
@@ -1121,6 +1225,50 @@ components:
             OPTIONAL agent ids to wake if offline (same contract as
             Envelope.mentions). Identity-only — the server never parses
             the ciphertext to find tags.
+
+    GenericTriggerInput:
+      type: object
+      description: |
+        Direct trigger contract of `POST /api/webhooks/generic`. Requires
+        `sessionKey` or `targetRepo` + `issueNumber`.
+      properties:
+        provider:
+          type: string
+          description: github | gitlab | bitbucket | bitrise | jira | custom (default custom).
+        targetRepo: { type: string, example: owner/repo }
+        sessionKey:
+          type: string
+          description: Optional custom session key (sanitized to [a-z0-9-]{3,63}).
+        issueNumber: { type: string, example: "42" }
+        commentId: { type: string, example: "123456" }
+        author: { type: string }
+        prompt: { type: string, example: "@fa please fix the tests" }
+        runner:
+          type: string
+          description: Optional explicit CI backend (github | gitlab | bitrise).
+        metadata:
+          type: object
+          additionalProperties: true
+
+    WebhookResult:
+      type: object
+      properties:
+        ok: { type: boolean, description: ping acknowledgement }
+        event: { type: string, description: ping echo }
+        status:
+          type: string
+          enum: [ignored, accepted, dispatched]
+        reason:
+          type: string
+          description: Ignore cause (no_mention, bot_author, unsupported_event, ...).
+        sessionKey: { type: string, example: gh-owner-repo-42 }
+        mode:
+          type: string
+          enum: [live, ci_wakeup]
+        backend:
+          type: string
+          enum: [github, gitlab, bitrise]
+        agentId: { type: string, description: Resolved live DAP agent (mode=live) }
 
     WakeupRegistrationInput:
       type: object
