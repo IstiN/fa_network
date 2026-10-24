@@ -16,6 +16,11 @@ type rosterSnapshotWire struct {
 type presenceChangedWire struct {
 	MemberID string `json:"memberId"`
 	Presence string `json:"presence"`
+	// DisplayName and Class are additive (issue #4): set for pure-DAP hub
+	// agents so late-appearing agents render named in the app roster;
+	// omitted for store members (already known from the snapshot).
+	DisplayName string `json:"displayName,omitempty"`
+	Class       string `json:"class,omitempty"`
 }
 
 type networkOfflineWire struct {
