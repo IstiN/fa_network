@@ -3,7 +3,6 @@
 package main
 
 import (
-	"strings"
 	"context"
 	"encoding/base64"
 	"flag"
@@ -12,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/IstiN/fa_network/internal/hub"
 	"github.com/IstiN/fa_network/internal/server"
 	"github.com/IstiN/fa_network/internal/store"
+	"github.com/IstiN/fa_network/internal/triggers"
 	"github.com/IstiN/fa_network/internal/wakeup"
 )
 
@@ -61,6 +62,7 @@ func buildServer(st store.Store) *server.Server {
 		ChannelBytesCap:         envInt64("FA_NETWORK_RETENTION_CHANNEL_BYTES", 256<<20),
 		RetentionSweepInterval:  envDuration("FA_NETWORK_RETENTION_SWEEP_INTERVAL", time.Hour),
 		CORSOrigins:             envCSV("FA_NETWORK_CORS_ORIGINS"),
+		Triggers:                triggers.NewService(triggers.FromEnv(), nil),
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/IstiN/fa_network/internal/auth"
 	"github.com/IstiN/fa_network/internal/hub"
 	"github.com/IstiN/fa_network/internal/store"
+	"github.com/IstiN/fa_network/internal/triggers"
 	"github.com/IstiN/fa_network/internal/wakeup"
 )
 
@@ -26,21 +27,25 @@ type Config struct {
 	Now func() time.Time
 	// CORSOrigins allow the browser app hosts (empty = no browser CORS).
 	CORSOrigins []string
+	// Triggers is the universal SCM/CI webhook ingress bridge (issue #3);
+	// nil disables the /api/webhooks/* routes with 503.
+	Triggers *triggers.Service
 }
 
 // Server is the fa_network edge: REST + WS over one mux.
 type Server struct {
-	st        store.Store
-	auth      auth.Provider
-	hub       hub.Client
-	wake      *wakeup.Dispatcher
-	cfg       Config
-	relay     *Relay
-	sessions  *SessionRegistry
-	limiter   *RateLimiter
+	st          store.Store
+	auth        auth.Provider
+	hub         hub.Client
+	wake        *wakeup.Dispatcher
+	cfg         Config
+	relay       *Relay
+	sessions    *SessionRegistry
+	limiter     *RateLimiter
 	corsOrigins []string
-	passwords *Passwords
-	failures  *FailureTracker
+	passwords   *Passwords
+	failures    *FailureTracker
+	triggers    *triggers.Service
 }
 
 // New builds the server and starts its relay loop.
@@ -64,6 +69,7 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		limiter:   NewRateLimiter(),
 		passwords: NewPasswords(),
 		failures:  NewFailureTracker(),
+		triggers:  cfg.Triggers,
 	}
 	s.relay = NewRelay(st, hubClient, s.sessions, dispatcher, cfg.Now)
 	if len(cfg.CORSOrigins) == 0 {
@@ -120,6 +126,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/networks/{networkId}/agents/{agentId}/wakeups", s.removeWakeup)
 	mux.HandleFunc("GET /api/networks/{networkId}/wakeups/log", s.wakeupLog)
 	mux.HandleFunc("GET /ws", s.serveWS)
+	for _, provider := range []string{"github", "gitlab", "bitbucket", "generic"} {
+		mux.HandleFunc("POST /api/webhooks/"+provider, s.handleWebhook(provider))
+	}
 	return newCORS(s.corsOrigins, mux)
 }
 

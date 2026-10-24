@@ -288,6 +288,30 @@ func (r *Relay) hubAgentMembers(networkID string, members []*model.Member) []*mo
 	return out
 }
 
+// AgentOnlineByNameOrID resolves a dap agent by AgentID or by enrolled
+// Name (the webhook session_key, issue #3) and reports its presence.
+func (r *Relay) AgentOnlineByNameOrID(nameOrID string) (agentID string, online bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if info, ok := r.hubAgents[nameOrID]; ok {
+		return info.AgentID, info.Online
+	}
+	for id, info := range r.hubAgents {
+		if info.Name == nameOrID {
+			return id, info.Online
+		}
+	}
+	return "", false
+}
+
+// hubAgentByID returns the cached presence of one hub agent.
+func (r *Relay) hubAgentByID(agentID string) (hub.PresenceInfo, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	info, ok := r.hubAgents[agentID]
+	return info, ok
+}
+
 // updateHubAgent refreshes the agent presence cache and notifies watchers.
 func (r *Relay) updateHubAgent(ev hub.Event) {
 	r.mu.Lock()
@@ -374,15 +398,32 @@ func (r *Relay) registered(ctx context.Context, networkID, agentID string) bool 
 
 // Mentions fires presence-gated wake-ups for offline mentioned agents
 // (identity-only payload — law #3). Mentions are agent ids, not content.
+// Pure-DAP agents (hubAgents, not store members) with a registered wakeup
+// are woken too (issue #3).
 func (r *Relay) Mentions(ctx context.Context, networkID string, env *model.Envelope) {
 	for _, agentID := range env.Mentions {
-		member, err := r.st.Member(ctx, networkID, agentID)
-		if err != nil {
-			continue // not a network member — nothing to wake
+		presence, known := r.mentionPresence(ctx, networkID, agentID)
+		if !known {
+			continue // neither a network member nor a hub agent — nothing to wake
 		}
-		_ = r.wake.Dispatch(ctx, networkID, agentID, member.Presence)
+		_ = r.wake.Dispatch(ctx, networkID, agentID, presence)
 		r.sessions.NotifyManagers(networkID, wakeupDispatchedWire{AgentID: agentID, At: r.now()})
 	}
+}
+
+// mentionPresence resolves the current presence of a mentioned agent:
+// store members use their member presence, pure hub agents their cached
+// dap presence.
+func (r *Relay) mentionPresence(ctx context.Context, networkID, agentID string) (string, bool) {
+	member, err := r.st.Member(ctx, networkID, agentID)
+	if err == nil {
+		return member.Presence, true
+	}
+	info, ok := r.hubAgentByID(agentID)
+	if !ok {
+		return "", false
+	}
+	return onlinePresence(info.Online), true
 }
 
 // PresenceOf reports the member presence, consulting live sessions first.
