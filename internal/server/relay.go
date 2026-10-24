@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -252,6 +253,41 @@ func (r *Relay) hubAgentName(agentID string) string {
 	return r.hubAgents[agentID].Name
 }
 
+// hubAgentMembers projects pure-DAP hub agents as synthetic agent-class
+// members for the WS roster snapshot (issue #4): without this, agents
+// already online before a browser connected never appeared in the app
+// roster ("0 online" despite live DAP agents). Store-member ids are
+// skipped (no duplicates); the result is sorted by agent id.
+func (r *Relay) hubAgentMembers(networkID string, members []*model.Member) []*model.Member {
+	seen := map[string]bool{}
+	for _, m := range members {
+		seen[m.ID] = true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := make([]string, 0, len(r.hubAgents))
+	for id := range r.hubAgents {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := []*model.Member{}
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		info := r.hubAgents[id]
+		name := info.Name
+		if name == "" {
+			name = id
+		}
+		out = append(out, &model.Member{
+			ID: id, NetworkID: networkID, Class: model.ClassAgent,
+			DisplayName: name, Presence: onlinePresence(info.Online),
+		})
+	}
+	return out
+}
+
 // updateHubAgent refreshes the agent presence cache and notifies watchers.
 func (r *Relay) updateHubAgent(ev hub.Event) {
 	r.mu.Lock()
@@ -265,7 +301,10 @@ func (r *Relay) updateHubAgent(ev hub.Event) {
 	}
 	r.hubAgents[ev.AgentID] = info
 	r.mu.Unlock()
-	r.sessions.Broadcast(presenceChangedWire{MemberID: ev.AgentID, Presence: onlinePresence(ev.Online)})
+	r.sessions.Broadcast(presenceChangedWire{
+		MemberID: ev.AgentID, Presence: onlinePresence(ev.Online),
+		DisplayName: info.Name, Class: model.ClassAgent,
+	})
 }
 
 // hubPresence returns the cached roster of dap agents.

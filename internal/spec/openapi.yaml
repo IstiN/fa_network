@@ -564,9 +564,9 @@ paths:
 
         | type | payload | notes |
         |---|---|---|
-        | `roster.snapshot` | `Member[]` | on connect and on roster change |
+        | `roster.snapshot` | `Member[]` | on connect and on roster change; includes pure-DAP hub agents as `class=agent` entries (issue #4) |
         | `envelope` | `Envelope` | relayed channel ciphertext |
-        | `presence.changed` | `{memberId, presence}` | `live`/`busy`/`offline` |
+        | `presence.changed` | `{memberId, presence, displayName?, class?}` | `live`/`busy`/`offline`; `displayName`/`class` set for DAP hub agents (issue #4), omitted for store members |
         | `network.offline` | `{reason}` | hub unreachable — queueing starts |
         | `network.drain` | `{count}` | reconnected; replaying queued envelopes |
         | `wakeup.dispatched` | `{agentId, at}` | owners/admins only (observability) |

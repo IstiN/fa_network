@@ -59,8 +59,10 @@ func (s *Server) handleWSConn(ctx context.Context, conn *websocket.Conn, sess *m
 	}()
 	s.relay.SyncMemberPresence(ctx, member)
 
-	// Greet: roster snapshot + offline state when the hub is down.
+	// Greet: roster snapshot (members + DAP hub agents, issue #4) +
+	// offline state when the hub is down.
 	members, _ := s.st.Members(ctx, sess.NetworkID)
+	members = append(members, s.relay.hubAgentMembers(sess.NetworkID, members)...)
 	ws.send <- s.sessions.SnapshotFor(sess.NetworkID, members)
 	if !s.hub.Online() {
 		ws.send <- wsFrame{Type: "network.offline", Payload: networkOfflineWire{Reason: "hub unreachable"}}
