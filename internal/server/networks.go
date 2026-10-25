@@ -110,7 +110,7 @@ func (s *Server) joinNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown network")
 		return
 	}
-	failKey := r.RemoteAddr + "|" + network.ID
+	failKey := clientIP(r) + "|" + network.ID
 	if blocked, retry := s.failures.Blocked(failKey, 5); blocked {
 		writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "too many failed attempts", retry)
 		return

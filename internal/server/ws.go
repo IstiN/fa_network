@@ -41,7 +41,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "invalid session")
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
+	// Browser cross-origin upgrades must follow the SAME allowlist as
+	// REST CORS (coder's default would reject every cross-origin app).
+	// Same-host upgrades stay allowed inside coder; requests without an
+	// Origin header (agents, CLIs) are unaffected.
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.corsOrigins})
 	if err != nil {
 		return
 	}
@@ -199,8 +203,7 @@ func (s *Server) wsEnvelopeSend(ctx context.Context, ws *wsConn, member *model.M
 	if err != nil || channel.NetworkID != member.NetworkID {
 		return
 	}
-	if channel.Public && member.Class != model.ClassOwner && member.Class != model.ClassAdmin {
-		ws.send <- wsFrame{Type: "error", Payload: map[string]string{"code": CodeChannelReadOnly}}
+	if !s.wsSendAllowed(ctx, ws, member, channel) {
 		return
 	}
 	env := &model.Envelope{
@@ -218,4 +221,30 @@ func (s *Server) wsEnvelopeSend(ctx context.Context, ws *wsConn, member *model.M
 	s.relay.Outbound(ctx, env)
 	s.relay.Mentions(ctx, channel.NetworkID, env)
 	s.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+}
+
+// wsSendAllowed applies the same guards as the REST send path: public
+// channels are owner/admin-write only, per-member rate limit and the
+// per-channel stored-byte cap. Failures emit an error frame (store
+// errors drop silently, matching the REST idempotency style).
+func (s *Server) wsSendAllowed(ctx context.Context, ws *wsConn, member *model.Member, channel *model.Channel) bool {
+	if channel.Public && member.Class != model.ClassOwner && member.Class != model.ClassAdmin {
+		ws.send <- wsFrame{Type: "error", Payload: map[string]string{"code": CodeChannelReadOnly}}
+		return false
+	}
+	// Same abuse controls as the REST send path (review #6): per-member
+	// rate limit and the per-channel stored-byte cap.
+	if !s.limiter.Allow("send|"+member.ID, 20, time.Minute) {
+		ws.send <- wsFrame{Type: "error", Payload: map[string]string{"code": CodeThrottled}}
+		return false
+	}
+	over, err := s.overByteCap(ctx, channel.ID)
+	if err != nil {
+		return false
+	}
+	if over {
+		ws.send <- wsFrame{Type: "error", Payload: map[string]string{"code": CodeThrottled}}
+		return false
+	}
+	return true
 }

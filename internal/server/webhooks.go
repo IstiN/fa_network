@@ -40,6 +40,12 @@ func (s *Server) handleWebhook(provider string) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "invalid webhook signature")
 			return
 		}
+		if s.deliveries.Seen(provider, deliveryID(provider, r.Header), s.cfg.Now()) {
+			// Provider retry or replayed request: acknowledge WITHOUT
+			// repeating reactions, timers or CI dispatches.
+			writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
+			return
+		}
 		event, err := s.triggers.Parse(provider, r.Header, body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, CodeInvalidPayload, err.Error())

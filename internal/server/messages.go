@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -140,7 +141,7 @@ func (s *Server) sendAllowed(w http.ResponseWriter, r *http.Request, idn *identi
 		writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "sends throttled", 5)
 		return false
 	}
-	over, err := s.overByteCap(r, channelID)
+	over, err := s.overByteCap(r.Context(), channelID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return false
@@ -153,8 +154,8 @@ func (s *Server) sendAllowed(w http.ResponseWriter, r *http.Request, idn *identi
 }
 
 // overByteCap enforces the per-channel stored-byte abuse guard.
-func (s *Server) overByteCap(r *http.Request, channelID string) (bool, error) {
-	total, err := s.st.ChannelBytes(r.Context(), channelID)
+func (s *Server) overByteCap(ctx context.Context, channelID string) (bool, error) {
+	total, err := s.st.ChannelBytes(ctx, channelID)
 	if err != nil {
 		return false, err
 	}

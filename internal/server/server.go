@@ -45,6 +45,7 @@ type Server struct {
 	corsOrigins []string
 	passwords   *Passwords
 	failures    *FailureTracker
+	deliveries  *deliveryCache
 	triggers    *triggers.Service
 }
 
@@ -60,16 +61,17 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		cfg.ChannelBytesCap = 256 << 20
 	}
 	s := &Server{
-		st:        st,
-		auth:      authProvider,
-		hub:       hubClient,
-		wake:      dispatcher,
-		cfg:       cfg,
-		sessions:  NewSessionRegistry(),
-		limiter:   NewRateLimiter(),
-		passwords: NewPasswords(),
-		failures:  NewFailureTracker(),
-		triggers:  cfg.Triggers,
+		st:         st,
+		auth:       authProvider,
+		hub:        hubClient,
+		wake:       dispatcher,
+		cfg:        cfg,
+		sessions:   NewSessionRegistry(),
+		limiter:    NewRateLimiter(),
+		passwords:  NewPasswords(),
+		failures:   NewFailureTracker(),
+		deliveries: newDeliveryCache(),
+		triggers:   cfg.Triggers,
 	}
 	s.relay = NewRelay(st, hubClient, s.sessions, dispatcher, cfg.Now)
 	if len(cfg.CORSOrigins) == 0 {
@@ -131,7 +133,7 @@ func (s *Server) Handler() http.Handler {
 	for _, provider := range []string{"github", "gitlab", "bitbucket", "generic"} {
 		mux.HandleFunc("POST /api/webhooks/"+provider, s.handleWebhook(provider))
 	}
-	return newCORS(s.corsOrigins, mux)
+	return newCORS(s.corsOrigins, limitJSONBody(mux))
 }
 
 // RunRelay starts background loops (hub event pump, retention sweeper).
