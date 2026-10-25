@@ -51,6 +51,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 // handleWSConn runs one socket: read pump + write pump + heartbeat.
 func (s *Server) handleWSConn(ctx context.Context, conn *websocket.Conn, sess *model.Session, member *model.Member) {
 	ws := newWSConn(sess, member.Class)
+	ws.closeConn = func() { _ = conn.CloseNow() }
 	s.sessions.Add(ws)
 	defer func() {
 		s.sessions.Remove(sess.Token)
@@ -72,7 +73,7 @@ func (s *Server) handleWSConn(ctx context.Context, conn *websocket.Conn, sess *m
 	writeDone := make(chan struct{})
 	go s.wsWriteLoop(conn, ws, writeDone)
 	s.wsReadPump(ctx, conn, ws, member)
-	close(ws.send)
+	ws.shutdown()
 	<-writeDone
 }
 
@@ -92,22 +93,26 @@ func (s *Server) wsWriteLoop(conn *websocket.Conn, ws *wsConn, done chan<- struc
 	defer ticker.Stop()
 	for {
 		select {
-		case frame, ok := <-ws.send:
-			if !ok {
-				return
-			}
+		case frame := <-ws.send:
 			if err := wsWrite(conn, frame); err != nil {
 				return
 			}
+		case <-ws.done:
+			return
 		case <-ticker.C:
-			if err := wsWrite(conn, wsFrame{Type: "ping"}); err != nil {
-				return
-			}
-			if ws.silentFor(time.Now(), wsGhostAfter) {
-				return // ghost: two missed beats (E7)
+			if s.wsHeartbeat(conn, ws) {
+				return // write failed or ghost: two missed beats (E7)
 			}
 		}
 	}
+}
+
+// wsHeartbeat sends a keepalive and reports whether the socket is dead.
+func (s *Server) wsHeartbeat(conn *websocket.Conn, ws *wsConn) bool {
+	if err := wsWrite(conn, wsFrame{Type: "ping"}); err != nil {
+		return true
+	}
+	return ws.silentFor(time.Now(), wsGhostAfter)
 }
 
 func wsWrite(conn *websocket.Conn, frame wsFrame) error {

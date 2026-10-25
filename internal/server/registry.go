@@ -16,6 +16,12 @@ type wsConn struct {
 	lastPong time.Time
 	mu       sync.Mutex
 	class    string
+	// done signals shutdown without ever closing send (concurrent
+	// broadcasters must never panic on a closed channel); closeConn
+	// aborts the underlying socket so the read pump unblocks.
+	done      chan struct{}
+	closeOnce sync.Once
+	closeConn func()
 }
 
 func newWSConn(sess *model.Session, class string) *wsConn {
@@ -25,7 +31,18 @@ func newWSConn(sess *model.Session, class string) *wsConn {
 		subs:     map[string]bool{},
 		lastPong: time.Now(),
 		class:    class,
+		done:     make(chan struct{}),
 	}
+}
+
+// shutdown stops the writer and closes the socket exactly once.
+func (c *wsConn) shutdown() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		if c.closeConn != nil {
+			c.closeConn()
+		}
+	})
 }
 
 func (c *wsConn) subscribed(channelID string) bool {
@@ -159,6 +176,24 @@ func (r *SessionRegistry) SnapshotFor(networkID string, members []*model.Member)
 		wires = append(wires, model.MemberWireOf(m))
 	}
 	return wsFrame{Type: "roster.snapshot", Payload: rosterSnapshotWire{Members: wires}}
+}
+
+// KickMember disconnects every socket of one member (agent/guest kick).
+// Their sessions are already deleted store-side; the next read fails and
+// the per-connection cleanup runs.
+func (r *SessionRegistry) KickMember(networkID, memberID string) {
+	r.mu.Lock()
+	targets := []*wsConn{}
+	for token, c := range r.byToken {
+		if c.session.NetworkID == networkID && c.session.MemberID == memberID {
+			targets = append(targets, c)
+			delete(r.byToken, token)
+		}
+	}
+	r.mu.Unlock()
+	for _, c := range targets {
+		c.shutdown()
+	}
 }
 
 // ActiveNetworks lists networks with at least one connected socket.
