@@ -21,7 +21,6 @@ func (r *Relay) seedHubPresence(ctx context.Context) {
 // seedHubPresenceOnce makes one bounded presence_query attempt and merges
 // the answer into the cache; the outcome is always logged (prod
 // observability for the "0 online after deploy" class of issues).
-// Dropped agents (roster tombstones) are never resurrected.
 func (r *Relay) seedHubPresenceOnce(ctx context.Context) bool {
 	qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -31,16 +30,11 @@ func (r *Relay) seedHubPresenceOnce(ctx context.Context) bool {
 		return false
 	}
 	r.mu.Lock()
-	merged := 0
 	for _, a := range agents {
-		if r.dropped[a.AgentID] {
-			continue
-		}
 		r.hubAgents[a.AgentID] = a
-		merged++
 	}
 	r.mu.Unlock()
-	log.Printf("relay: seeded %d hub agents (%d dropped skipped)", merged, len(agents)-merged)
+	log.Printf("relay: seeded %d hub agents", len(agents))
 	return true
 }
 

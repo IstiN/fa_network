@@ -29,7 +29,7 @@ type Relay struct {
 	queues    map[string][]*model.Envelope // channelID -> pending outbound
 	sending   map[string]bool              // per-channel send serialization
 	hubAgents map[string]hub.PresenceInfo  // agentID -> last known
-	dropped   map[string]bool              // roster tombstones (persisted in store)
+	dropped   map[string]map[string]bool   // networkID -> per-network roster exclusions
 	online    bool
 	// seedRetryDelays paces the background presence-reseed retries after a
 	// failed initial attempt (tests shrink it).
@@ -47,7 +47,7 @@ func NewRelay(st store.Store, hubClient hub.Client, sessions *SessionRegistry, d
 		queues:          map[string][]*model.Envelope{},
 		sending:         map[string]bool{},
 		hubAgents:       map[string]hub.PresenceInfo{},
-		dropped:         map[string]bool{},
+		dropped:         map[string]map[string]bool{},
 		online:          hubClient.Online(),
 		seedRetryDelays: []time.Duration{5 * time.Second, 15 * time.Second},
 	}
@@ -247,9 +247,6 @@ func (r *Relay) hubPresence() []hub.PresenceInfo {
 	defer r.mu.Unlock()
 	out := make([]hub.PresenceInfo, 0, len(r.hubAgents))
 	for _, info := range r.hubAgents {
-		if r.dropped[info.AgentID] {
-			continue
-		}
 		out = append(out, info)
 	}
 	return out
@@ -291,7 +288,7 @@ func (r *Relay) hubAgentsWires(ctx context.Context, networkID string, existing [
 	}
 	wires := []model.AgentWire{}
 	for _, info := range r.hubPresence() {
-		if seen[info.AgentID] {
+		if seen[info.AgentID] || r.isDropped(networkID, info.AgentID) {
 			continue
 		}
 		wires = append(wires, model.AgentWire{

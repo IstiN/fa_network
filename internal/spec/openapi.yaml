@@ -423,7 +423,10 @@ paths:
     post:
       tags: [networks]
       summary: Appoint a network admin (owner only, authed)
-      description: Owner appoints admins; admins must be authed identities.
+      description: |
+        Owner appoints admins; admins must be authed identities.
+        Guest/agent-class members cannot be promoted (403): their
+        already-issued tokens must never gain management powers.
       security:
         - authJwt: []
       parameters:
@@ -756,7 +759,10 @@ paths:
         name = fa_network channel id; private-channel keys still arrive only
         via client-side chankey invites (the server never holds them).
         Re-enrolling the same name ROTATES the secret (revocation path).
-        Guests and plain members are rejected by class (E9).
+        Agent names are first-come OWNED by the enrolling network: only
+        the owning network may re-enroll/rotate; another network gets
+        409 (cross-tenant secret rotation is forbidden). Guests and
+        plain members are rejected by class (E9).
       security:
         - authJwt: []
       parameters:
@@ -776,6 +782,12 @@ paths:
                 $ref: '#/components/schemas/AgentEnrollResponse'
         '403':
           $ref: '#/components/responses/ForbiddenByClass'
+        '409':
+          description: Agent name owned by another network.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: Hub unreachable — enrollment failed, retry later.
           content:
@@ -788,17 +800,17 @@ paths:
       tags: [agents]
       summary: Drop a hub agent from the roster (owner/admin)
       description: |
-        Removes a pure-DAP hub agent from every roster view
-        (`roster.snapshot`, `/agents`, `presence.changed`). Persists a
-        GLOBAL tombstone (hub agents are hub-scoped): the agent is not
-        resurrected by presence reseeds, hub presence events, or fa_network
-        restarts. A fresh `roster.snapshot` is pushed to all connected
-        networks. The server additionally makes a best-effort hub admin
-        eviction (`DELETE /api/agents/{agentId}` on the dap hub, requires
-        `FA_NETWORK_DAP_ADMIN_TOKEN`; refused there while the agent is
-        online) — the roster tombstone applies regardless of that outcome.
-        Idempotent: 204 for unknown or already-dropped agents. Guests and
-        plain members are rejected by class (E9).
+        Removes a pure-DAP hub agent from THIS network's roster views
+        (`roster.snapshot`, `/agents`, `presence.changed`) — other
+        networks are unaffected (cross-tenant isolation). The per-network
+        tombstone persists across presence reseeds, hub presence events
+        and fa_network restarts; a fresh `roster.snapshot` is pushed to
+        this network's connected sockets. Hub admin eviction
+        (`DELETE /api/agents/{agentId}` on the dap hub) is attempted ONLY
+        for agents enrolled via this same network (name ownership) —
+        never for foreign or manually enrolled agents. Idempotent: 204
+        when already dropped; 404 for unknown agents (no side effects).
+        Guests and plain members are rejected by class (E9).
       security:
         - authJwt: []
       parameters:
@@ -809,6 +821,12 @@ paths:
           description: Dropped (tombstone persisted; roster refreshed).
         '403':
           $ref: '#/components/responses/ForbiddenByClass'
+        '404':
+          description: Unknown agent (no side effects).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /api/networks/{networkId}/agents/{agentId}/wakeups:
     get:

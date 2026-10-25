@@ -52,6 +52,12 @@ func (s *Server) resolveIdentity(w http.ResponseWriter, r *http.Request, network
 	}
 	ctx := r.Context()
 	if sess, err := s.st.Session(ctx, token); err == nil {
+		if sess.NetworkID != networkID {
+			// Sessions are network-bound: a valid token from another
+			// network must never act with this network's member class.
+			writeError(w, http.StatusForbidden, CodeForbiddenClass, "session belongs to another network")
+			return nil
+		}
 		member, err := s.st.Member(ctx, networkID, sess.MemberID)
 		if err != nil {
 			writeError(w, http.StatusForbidden, CodeForbiddenClass, "not a network member")
