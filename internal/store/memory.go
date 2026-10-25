@@ -25,6 +25,7 @@ type MemStore struct {
 	wakeups    map[string]*model.WakeupRegistration
 	dispatches map[string][]model.WakeupDispatch
 	activity   map[string]time.Time // networkID -> last session activity
+	dropped    map[string]bool      // dropped hub agentIDs (roster tombstones)
 }
 
 // NewMemStore returns an empty in-memory store.
@@ -39,6 +40,7 @@ func NewMemStore() *MemStore {
 		wakeups:    map[string]*model.WakeupRegistration{},
 		dispatches: map[string][]model.WakeupDispatch{},
 		activity:   map[string]time.Time{},
+		dropped:    map[string]bool{},
 	}
 }
 

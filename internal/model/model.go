@@ -55,6 +55,8 @@ type Member struct {
 	Class       string
 	DisplayName string
 	Presence    string
+	// Access is computed at roster assembly time (never persisted).
+	Access *AccessWire
 }
 
 // Channel is a dap channel mirrored by the relay.
@@ -79,9 +81,9 @@ type Envelope struct {
 	// relay knows it (presence cache) — a roster-ish render hint (issue #2),
 	// never message content.
 	SenderName string
-	Payload   string
-	Mentions  []string
-	CreatedAt time.Time
+	Payload    string
+	Mentions   []string
+	CreatedAt  time.Time
 }
 
 // Session is a browser session token issued by join (memory only, E7).

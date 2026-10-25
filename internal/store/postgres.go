@@ -87,6 +87,10 @@ CREATE TABLE IF NOT EXISTS dispatches (
   note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS dispatches_network_seq ON dispatches (network_id, seq);
+CREATE TABLE IF NOT EXISTS dropped_hub_agents (
+  agent_id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL
+);
 `
 
 // pgAlterStatements are idempotent additive migrations (IF NOT EXISTS).

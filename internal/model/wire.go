@@ -57,6 +57,18 @@ type MemberWire struct {
 	Class       string `json:"class"`
 	DisplayName string `json:"displayName"`
 	Presence    string `json:"presence"`
+	// Access is the member's effective channel scope (additive; omitted
+	// when it could not be computed).
+	Access *AccessWire `json:"access,omitempty"`
+}
+
+// AccessWire describes roster scope: "network" = every channel of the
+// network is readable/writable per channel ACLs (owner/admin always);
+// "channels" = restricted, ChannelIDs lists the accessible channels
+// (open ones plus those whose ACL names the member).
+type AccessWire struct {
+	Scope      string   `json:"scope"`
+	ChannelIDs []string `json:"channelIds,omitempty"`
 }
 
 // MemberWireOf projects a Member for the API.
@@ -66,6 +78,7 @@ func MemberWireOf(m *Member) MemberWire {
 		Class:       m.Class,
 		DisplayName: m.DisplayName,
 		Presence:    m.Presence,
+		Access:      m.Access,
 	}
 }
 
@@ -93,29 +106,29 @@ func ChannelWireOf(c *Channel) ChannelWire {
 
 // EnvelopeWire is the opaque envelope projection.
 type EnvelopeWire struct {
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channelId"`
-	SenderID  string    `json:"senderId"`
+	ID        string `json:"id"`
+	ChannelID string `json:"channelId"`
+	SenderID  string `json:"senderId"`
 	// SenderKey: sender X25519 pubkey (base64), when known to the relay.
-	SenderKey string    `json:"senderKey,omitempty"`
+	SenderKey string `json:"senderKey,omitempty"`
 	// SenderName: enrolled hub name of the sender, when known (issue #2).
-	SenderName string   `json:"senderName,omitempty"`
-	Payload   string    `json:"payload"`
-	Mentions  []string  `json:"mentions,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	SenderName string    `json:"senderName,omitempty"`
+	Payload    string    `json:"payload"`
+	Mentions   []string  `json:"mentions,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 // EnvelopeWireOf projects an Envelope for the API.
 func EnvelopeWireOf(e *Envelope) EnvelopeWire {
 	return EnvelopeWire{
-		ID:        e.ID,
-		ChannelID: e.ChannelID,
+		ID:         e.ID,
+		ChannelID:  e.ChannelID,
 		SenderID:   e.SenderID,
 		SenderKey:  e.SenderKey,
 		SenderName: e.SenderName,
-		Payload:   e.Payload,
-		Mentions:  e.Mentions,
-		CreatedAt: e.CreatedAt,
+		Payload:    e.Payload,
+		Mentions:   e.Mentions,
+		CreatedAt:  e.CreatedAt,
 	}
 }
 

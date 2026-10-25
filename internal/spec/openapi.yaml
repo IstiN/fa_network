@@ -668,9 +668,9 @@ paths:
 
         | type | payload | notes |
         |---|---|---|
-        | `roster.snapshot` | `Member[]` | on connect and on roster change; includes pure-DAP hub agents as `class=agent` entries (issue #4) |
+        | `roster.snapshot` | `{members: Member[]}` | on connect and pushed on roster/ACL changes; includes pure-DAP hub agents as `class=agent` entries (issue #4); each member carries additive `access` |
         | `envelope` | `Envelope` | relayed channel ciphertext |
-        | `presence.changed` | `{memberId, presence, displayName?, class?}` | `live`/`busy`/`offline`; `displayName`/`class` set for DAP hub agents (issue #4), omitted for store members |
+        | `presence.changed` | `{memberId, presence, displayName?, class?, access?}` | `live`/`busy`/`offline`; `displayName`/`class` set for DAP hub agents (issue #4), omitted for store members; additive `access` = scope at event time |
         | `network.offline` | `{reason}` | hub unreachable — queueing starts |
         | `network.drain` | `{count}` | reconnected; replaying queued envelopes |
         | `wakeup.dispatched` | `{agentId, at}` | owners/admins only (observability) |
@@ -751,6 +751,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /api/networks/{networkId}/agents/{agentId}:
+    delete:
+      tags: [agents]
+      summary: Drop a hub agent from the roster (owner/admin)
+      description: |
+        Removes a pure-DAP hub agent from every roster view
+        (`roster.snapshot`, `/agents`, `presence.changed`). Persists a
+        GLOBAL tombstone (hub agents are hub-scoped): the agent is not
+        resurrected by presence reseeds, hub presence events, or fa_network
+        restarts. A fresh `roster.snapshot` is pushed to all connected
+        networks. The server additionally makes a best-effort hub admin
+        eviction (`DELETE /api/agents/{agentId}` on the dap hub, requires
+        `FA_NETWORK_DAP_ADMIN_TOKEN`; refused there while the agent is
+        online) — the roster tombstone applies regardless of that outcome.
+        Idempotent: 204 for unknown or already-dropped agents. Guests and
+        plain members are rejected by class (E9).
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '204':
+          description: Dropped (tombstone persisted; roster refreshed).
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
 
   /api/networks/{networkId}/agents/{agentId}/wakeups:
     get:
@@ -1056,6 +1083,27 @@ components:
         presence:
           type: string
           enum: [live, busy, offline]
+        access:
+          $ref: '#/components/schemas/AccessScope'
+
+    AccessScope:
+      type: object
+      required: [scope]
+      description: |
+        Additive roster access badge derived from the network's Channel.acl
+        metadata (empty ACL = open/network-wide; owner/admin always
+        "network"). ACL entries are matched against the roster member id
+        (hub agentId for pure-DAP agents). This is a display hint, not an
+        enforcement statement. scope="channels" lists every accessible
+        channel (open ones plus those whose ACL names the member).
+      properties:
+        scope:
+          type: string
+          enum: [network, channels]
+        channelIds:
+          type: array
+          items: { type: string }
+          description: Accessible channels when scope=channels (omitted for network).
 
     Agent:
       type: object
@@ -1115,7 +1163,10 @@ components:
         acl:
           type: array
           items: { type: string }
-          description: dap channel ACL member ids (pubkey identities).
+          description: |
+            dap channel ACL member ids (pubkey identities on the hub). For
+            roster AccessScope derivation entries are matched against roster
+            member ids / hub agentIds; empty = network-wide.
         retentionDays:
           type: integer
           minimum: 0

@@ -6,6 +6,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -74,4 +75,12 @@ type Client interface {
 	EnrollAgent(ctx context.Context, name string) (string, error)
 	// HubURL is the hub endpoint for agent invite strings.
 	HubURL() string
+	// EvictAgent asks the hub admin API to evict an agent identity from
+	// the presence registry (best-effort roster hygiene; the fa_network
+	// tombstone is the authoritative roster exclusion). Returns
+	// ErrAdminTokenMissing when no hub admin token is configured.
+	EvictAgent(ctx context.Context, agentID string) error
 }
+
+// ErrAdminTokenMissing marks an unconfigured hub admin token.
+var ErrAdminTokenMissing = errors.New("hub: admin token not configured")
