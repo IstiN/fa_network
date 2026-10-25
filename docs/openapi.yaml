@@ -713,8 +713,18 @@ paths:
         | `roster.snapshot` | `{members: Member[]}` | on connect and pushed on roster/ACL changes; includes pure-DAP hub agents as `class=agent` entries (issue #4); each member carries additive `access` |
         | `envelope` | `Envelope` | relayed channel ciphertext |
         | `presence.changed` | `{memberId, presence, displayName?, class?, access?}` | `live`/`busy`/`offline`; `displayName`/`class` set for DAP hub agents (issue #4), omitted for store members; additive `access` = scope at event time |
-        | `network.offline` | `{reason}` | hub unreachable — queueing starts |
-        | `network.drain` | `{count}` | reconnected; replaying queued envelopes |
+        | `network.offline` | `{reason}` | hub unreachable — queueing starts; broadcast on every hub disconnect AND sent on the WS greeting whenever the hub is currently down |
+        | `network.drain` | `{count}` | hub reconnected; `{count}` queued envelopes flushed; broadcast once after every successful hub (re)connect — NOT replayed to sockets that connect later |
+
+        **Offline/online contract (sticky-banner trap):** `network.drain` is a
+        broadcast, not a per-socket online handshake, and there is deliberately
+        no positive `network.online` greeting. A socket that saw
+        `network.offline` and then reconnects after the drain was broadcast
+        receives only `roster.snapshot` — clients MUST therefore clear any
+        sticky offline/"reconnecting" state on every fresh socket (and on
+        manual reconnect + roster refresh): when the hub is still down the
+        greeting re-sends `network.offline` immediately, so optimistic clearing
+        can never mask a real outage.
         | `wakeup.dispatched` | `{agentId, at}` | owners/admins only (observability) |
 
         **Client → server frames:**
