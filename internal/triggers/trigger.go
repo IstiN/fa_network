@@ -80,11 +80,12 @@ func IsBot(login, userType string, opts ParseOptions) bool {
 	if opts.AllowBots {
 		return false
 	}
-	if strings.EqualFold(userType, "Bot") {
-		return true
+	if strings.EqualFold(userType, "Bot") || strings.EqualFold(userType, "app") {
+		return true // GitHub bots; Bitbucket app users
 	}
-	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
-		return true
+	lower := strings.ToLower(login)
+	if strings.HasSuffix(lower, "[bot]") || strings.HasSuffix(lower, "_bot") || strings.Contains(lower, "_bot_") {
+		return true // GitLab project/group access-token bots carry no actor type
 	}
 	return IsListedBot(login, opts.BotLogins)
 }

@@ -68,7 +68,13 @@ func buildServer(st store.Store) *server.Server {
 
 // serveHTTP runs the listener until ctx is cancelled.
 func serveHTTP(ctx context.Context, addr string, srv *server.Server) {
-	httpServer := &http.Server{Addr: addr, Handler: srv.Handler()}
+	// ReadHeaderTimeout + IdleTimeout bound slowloris/idle connections.
+	// No Read/WriteTimeout: those would kill long-lived WebSockets.
+	httpServer := &http.Server{
+		Addr: addr, Handler: srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

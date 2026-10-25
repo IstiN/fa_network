@@ -117,6 +117,14 @@ paths:
         (`fa-universal.yml`). No session JWT — authenticity is the
         provider secret; a missing configured secret fails closed (401).
 
+        **Replay/idempotency:** deliveries carrying a unique id header
+        (GitHub `X-GitHub-Delivery`, GitLab `X-Gitlab-Event-UUID`,
+        Bitbucket `X-Request-UUID`, generic `X-Fa-Delivery-Id`) are
+        deduplicated for 24h AFTER authentication and BEFORE any side
+        effect: a duplicate gets `200 {"status":"duplicate"}` with no
+        repeated reactions, timers or CI dispatches. Deliveries without
+        an id header keep the previous at-least-once behaviour.
+
         **Authentication per provider** (fallback for all secrets:
         `FA_NETWORK_WEBHOOK_SECRET`):
         - `github`: `X-Hub-Signature-256` HMAC-SHA256 (`sha256=<hex>`) with
