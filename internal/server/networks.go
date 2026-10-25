@@ -485,6 +485,7 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wires := make([]model.MemberWire, 0, len(members))
+	s.relay.decorateAccess(r.Context(), members)
 	for _, m := range members {
 		wires = append(wires, model.MemberWireOf(m))
 	}

@@ -23,6 +23,7 @@ import (
 type DapClient struct {
 	url         string
 	secret      string
+	adminToken  string
 	name        string
 	agentID     string
 	edPriv      ed25519.PrivateKey
@@ -48,7 +49,10 @@ type DapClient struct {
 type DapConfig struct {
 	URL          string // ws(s)://hub/ws
 	MasterSecret string
-	Name         string
+	// AdminToken (optional) authorizes the hub admin REST API for
+	// best-effort agent eviction (FA_NETWORK_DAP_ADMIN_TOKEN).
+	AdminToken string
+	Name       string
 	// IdentitySeed (32 bytes) pins the Ed25519+X25519 keypair so the relay
 	// agentId (and its hub mailbox) survives restarts. Empty = ephemeral
 	// per boot (fine for tests, wrong for prod).
@@ -93,6 +97,7 @@ func NewDapClient(cfg DapConfig) (*DapClient, error) {
 	return &DapClient{
 		url:         cfg.URL,
 		secret:      cfg.MasterSecret,
+		adminToken:  cfg.AdminToken,
 		name:        cfg.Name,
 		agentID:     "r_" + hex.EncodeToString(sum[:])[:12],
 		edPriv:      edPriv,

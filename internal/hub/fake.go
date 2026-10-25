@@ -19,6 +19,8 @@ type FakeClient struct {
 	presence []PresenceInfo
 	joined   map[string]bool
 	closed   bool
+	evicted  []string
+	evictErr error
 }
 
 // NewFakeClient returns an online fake with the given relay identity.
@@ -45,6 +47,28 @@ func (f *FakeClient) EnrollAgent(_ context.Context, name string) (string, error)
 
 // HubURL implements Client.
 func (f *FakeClient) HubURL() string { return "ws://fake-hub/ws" }
+
+// EvictAgent implements Client: records the eviction for assertions.
+func (f *FakeClient) EvictAgent(_ context.Context, agentID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.evicted = append(f.evicted, agentID)
+	return f.evictErr
+}
+
+// Evicted returns the agentIDs evicted via the admin API (test helper).
+func (f *FakeClient) Evicted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.evicted...)
+}
+
+// SetEvictError simulates an admin eviction failure (test helper).
+func (f *FakeClient) SetEvictError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.evictErr = err
+}
 
 // Online implements Client.
 func (f *FakeClient) Online() bool {

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"log"
-	"sort"
 	"sync"
 	"time"
 
@@ -30,6 +29,7 @@ type Relay struct {
 	queues    map[string][]*model.Envelope // channelID -> pending outbound
 	sending   map[string]bool              // per-channel send serialization
 	hubAgents map[string]hub.PresenceInfo  // agentID -> last known
+	dropped   map[string]bool              // roster tombstones (persisted in store)
 	online    bool
 	// seedRetryDelays paces the background presence-reseed retries after a
 	// failed initial attempt (tests shrink it).
@@ -47,6 +47,7 @@ func NewRelay(st store.Store, hubClient hub.Client, sessions *SessionRegistry, d
 		queues:          map[string][]*model.Envelope{},
 		sending:         map[string]bool{},
 		hubAgents:       map[string]hub.PresenceInfo{},
+		dropped:         map[string]bool{},
 		online:          hubClient.Online(),
 		seedRetryDelays: []time.Duration{5 * time.Second, 15 * time.Second},
 	}
@@ -54,6 +55,7 @@ func NewRelay(st store.Store, hubClient hub.Client, sessions *SessionRegistry, d
 
 // Run pumps hub events until ctx ends (started as a goroutine).
 func (r *Relay) Run(ctx context.Context) {
+	r.loadDropped(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -72,7 +74,7 @@ func (r *Relay) handleEvent(ctx context.Context, ev hub.Event) {
 	case hub.EventMsg:
 		r.inbound(ctx, ev.Msg)
 	case hub.EventPresence:
-		r.updateHubAgent(ev)
+		r.updateHubAgent(ctx, ev)
 	case hub.EventOffline:
 		r.setOnline(false)
 		r.sessions.Broadcast(networkOfflineWire{Reason: "hub unreachable"})
@@ -231,113 +233,6 @@ func (r *Relay) joinNetworkChannels(ctx context.Context, networkID string) {
 	}
 }
 
-// seedHubPresence repopulates the hub-agent roster after every (re)connect
-// so senderName resolution also covers agents whose presence transitions
-// happened while the relay was down (restart, deploy). A failed first
-// attempt (cold/slow hub) is retried in the background — a deploy must
-// never leave the roster empty until the next agent reconnect.
-func (r *Relay) seedHubPresence(ctx context.Context) {
-	if r.seedHubPresenceOnce(ctx) {
-		return
-	}
-	go r.retrySeedHubPresence(ctx)
-}
-
-// seedHubPresenceOnce makes one bounded presence_query attempt and merges
-// the answer into the cache; the outcome is always logged (prod
-// observability for the "0 online after deploy" class of issues).
-func (r *Relay) seedHubPresenceOnce(ctx context.Context) bool {
-	qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	agents, err := r.hub.Presence(qctx)
-	if err != nil {
-		log.Printf("relay: hub presence reseed failed: %v", err)
-		return false
-	}
-	r.mu.Lock()
-	for _, a := range agents {
-		r.hubAgents[a.AgentID] = a
-	}
-	r.mu.Unlock()
-	log.Printf("relay: seeded %d hub agents", len(agents))
-	return true
-}
-
-// retrySeedHubPresence retries the failed initial seed with backoff.
-func (r *Relay) retrySeedHubPresence(ctx context.Context) {
-	for _, delay := range r.seedRetryDelays {
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		if r.seedHubPresenceOnce(ctx) {
-			return
-		}
-	}
-}
-
-// hubAgentName resolves the enrolled display name of a hub agent from the
-// presence cache (empty when unknown).
-func (r *Relay) hubAgentName(agentID string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.hubAgents[agentID].Name
-}
-
-// hubAgentMembers projects pure-DAP hub agents as synthetic agent-class
-// members for the WS roster snapshot (issue #4): without this, agents
-// already online before a browser connected never appeared in the app
-// roster ("0 online" despite live DAP agents). Store-member ids are
-// skipped (no duplicates); the result is sorted by agent id.
-func (r *Relay) hubAgentMembers(networkID string, members []*model.Member) []*model.Member {
-	seen := map[string]bool{}
-	for _, m := range members {
-		seen[m.ID] = true
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ids := make([]string, 0, len(r.hubAgents))
-	for id := range r.hubAgents {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	out := []*model.Member{}
-	for _, id := range ids {
-		if seen[id] {
-			continue
-		}
-		info := r.hubAgents[id]
-		name := info.Name
-		if name == "" {
-			name = id
-		}
-		out = append(out, &model.Member{
-			ID: id, NetworkID: networkID, Class: model.ClassAgent,
-			DisplayName: name, Presence: onlinePresence(info.Online),
-		})
-	}
-	return out
-}
-
-// AgentOnlineByNameOrID resolves a dap agent by AgentID or by enrolled
-// Name (the webhook session_key, issue #3) and reports its presence.
-func (r *Relay) AgentOnlineByNameOrID(nameOrID string) (agentID string, online bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if info, ok := r.hubAgents[nameOrID]; ok {
-		return info.AgentID, info.Online
-	}
-	for id, info := range r.hubAgents {
-		if info.Name == nameOrID {
-			return id, info.Online
-		}
-	}
-	return "", false
-}
-
 // hubAgentByID returns the cached presence of one hub agent.
 func (r *Relay) hubAgentByID(agentID string) (hub.PresenceInfo, bool) {
 	r.mu.Lock()
@@ -346,31 +241,15 @@ func (r *Relay) hubAgentByID(agentID string) (hub.PresenceInfo, bool) {
 	return info, ok
 }
 
-// updateHubAgent refreshes the agent presence cache and notifies watchers.
-func (r *Relay) updateHubAgent(ev hub.Event) {
-	r.mu.Lock()
-	info, ok := r.hubAgents[ev.AgentID]
-	if !ok {
-		info = hub.PresenceInfo{AgentID: ev.AgentID, Name: ev.Name}
-	}
-	info.Online = ev.Online
-	if ev.Name != "" {
-		info.Name = ev.Name
-	}
-	r.hubAgents[ev.AgentID] = info
-	r.mu.Unlock()
-	r.sessions.Broadcast(presenceChangedWire{
-		MemberID: ev.AgentID, Presence: onlinePresence(ev.Online),
-		DisplayName: info.Name, Class: model.ClassAgent,
-	})
-}
-
 // hubPresence returns the cached roster of dap agents.
 func (r *Relay) hubPresence() []hub.PresenceInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]hub.PresenceInfo, 0, len(r.hubAgents))
 	for _, info := range r.hubAgents {
+		if r.dropped[info.AgentID] {
+			continue
+		}
 		out = append(out, info)
 	}
 	return out
@@ -477,7 +356,10 @@ func (r *Relay) SyncMemberPresence(ctx context.Context, member *model.Member) {
 	}
 	member.Presence = presence
 	_ = r.st.UpdateMemberPresence(ctx, member.NetworkID, member.ID, presence)
-	r.sessions.BroadcastTo(member.NetworkID, presenceChangedWire{MemberID: member.ID, Presence: presence})
+	r.sessions.BroadcastTo(member.NetworkID, presenceChangedWire{
+		MemberID: member.ID, Presence: presence,
+		Access: r.memberAccess(ctx, member),
+	})
 }
 
 func cloneEnv(e *model.Envelope) *model.Envelope {

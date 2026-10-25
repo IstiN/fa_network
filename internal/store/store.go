@@ -98,6 +98,15 @@ type Wakeups interface {
 	Dispatches(ctx context.Context, networkID, cursor string, limit int) (*model.Page[model.WakeupDispatch], error)
 }
 
+// DroppedHubAgents persists roster-removal tombstones for pure dap hub
+// agents. Tombstones are GLOBAL: hub agents are hub-scoped (they appear
+// in every network's roster), so a drop by any network manager removes
+// the entry everywhere and survives reseeds and restarts.
+type DroppedHubAgents interface {
+	DropHubAgent(ctx context.Context, agentID string) error
+	DroppedHubAgentIDs(ctx context.Context) ([]string, error)
+}
+
 // Store composes every persistence facet. One handle per process.
 type Store interface {
 	Networks
@@ -106,6 +115,7 @@ type Store interface {
 	Envelopes
 	Sessions
 	Wakeups
+	DroppedHubAgents
 	// TouchActivity stamps network session activity (retention clock).
 	TouchActivity(ctx context.Context, networkID string, at time.Time) error
 	// DeleteNetworkData wipes a whole network (retention cleanup).

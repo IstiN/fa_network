@@ -1,6 +1,7 @@
 package server
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -160,6 +161,24 @@ func (r *SessionRegistry) SnapshotFor(networkID string, members []*model.Member)
 	return wsFrame{Type: "roster.snapshot", Payload: rosterSnapshotWire{Members: wires}}
 }
 
+// ActiveNetworks lists networks with at least one connected socket.
+func (r *SessionRegistry) ActiveNetworks() []string {
+	r.mu.Lock()
+	set := map[string]bool{}
+	for _, c := range r.byToken {
+		if c.session.NetworkID != "" {
+			set[c.session.NetworkID] = true
+		}
+	}
+	r.mu.Unlock()
+	ids := make([]string, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // deliver is a non-blocking frame push (slow consumers drop, never stall
 // the relay).
 func deliver(c *wsConn, frame wsFrame) {
@@ -174,6 +193,8 @@ func frameTypeOf(payload any) string {
 	switch payload.(type) {
 	case presenceChangedWire:
 		return "presence.changed"
+	case rosterSnapshotWire:
+		return "roster.snapshot"
 	case networkOfflineWire:
 		return "network.offline"
 	case networkDrainWire:

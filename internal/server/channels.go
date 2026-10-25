@@ -61,6 +61,7 @@ func (s *Server) createChannel(w http.ResponseWriter, r *http.Request) {
 	if req.Public {
 		s.addPublicChannel(r, networkID, channel.ID)
 	}
+	s.broadcastRosterSnapshot(r.Context(), networkID)
 	writeJSON(w, http.StatusCreated, model.ChannelWireOf(channel))
 }
 
@@ -158,6 +159,7 @@ func (s *Server) patchChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return
 	}
+	s.broadcastRosterSnapshot(r.Context(), channel.NetworkID)
 	writeJSON(w, http.StatusOK, model.ChannelWireOf(channel))
 }
 
@@ -206,6 +208,7 @@ func (s *Server) deleteChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return
 	}
+	s.broadcastRosterSnapshot(r.Context(), channel.NetworkID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

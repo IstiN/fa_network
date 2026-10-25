@@ -21,6 +21,9 @@ type presenceChangedWire struct {
 	// omitted for store members (already known from the snapshot).
 	DisplayName string `json:"displayName,omitempty"`
 	Class       string `json:"class,omitempty"`
+	// Access is additive: the member's channel scope at event time
+	// (omitted when it could not be computed).
+	Access *model.AccessWire `json:"access,omitempty"`
 }
 
 type networkOfflineWire struct {

@@ -100,6 +100,7 @@ func openHub() hub.Client {
 	client, err := hub.NewDapClient(hub.DapConfig{
 		URL:          url,
 		MasterSecret: os.Getenv("FA_NETWORK_DAP_SECRET"),
+		AdminToken:   os.Getenv("FA_NETWORK_DAP_ADMIN_TOKEN"),
 		Name:         envOr("FA_NETWORK_DAP_NAME", "fa-network-relay"),
 		IdentitySeed: identitySeed(),
 	})
