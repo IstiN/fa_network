@@ -112,6 +112,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/networks/{networkId}/admins", s.addAdmin)
 	mux.HandleFunc("DELETE /api/networks/{networkId}/admins/{userId}", s.removeAdmin)
 	mux.HandleFunc("GET /api/networks/{networkId}/members", s.listMembers)
+	mux.HandleFunc("DELETE /api/networks/{networkId}/members/{memberId}", s.kickMember)
 	mux.HandleFunc("GET /api/networks/{networkId}/channels", s.listChannels)
 	mux.HandleFunc("POST /api/networks/{networkId}/channels", s.createChannel)
 	mux.HandleFunc("GET /api/channels/{channelId}", s.getChannel)

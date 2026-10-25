@@ -480,6 +480,32 @@ paths:
                 items:
                   $ref: '#/components/schemas/Member'
 
+  /api/networks/{networkId}/members/{memberId}:
+    delete:
+      tags: [networks]
+      summary: Kick a store member (owner/admin)
+      description: |
+        Removes a guest/member/agent-class store member from the network
+        roster, revokes their sessions and disconnects their sockets; a
+        fresh `roster.snapshot` is pushed to remaining members. Their
+        token fails closed immediately (the member row is gone).
+        Owner/admin rows cannot be kicked (403). Idempotent: 204 for
+        unknown or already-removed members. Pure-DAP hub agents use
+        DELETE .../agents/{agentId} instead.
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - name: memberId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Kicked (idempotent).
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+
   /api/networks/{networkId}/channels:
     get:
       tags: [channels]
@@ -502,6 +528,11 @@ paths:
         Regular channels are created by authed members. A `public` showcase
         channel (read-only for everyone except owner/admin) requires
         owner/admin (AC-B5).
+        The relay immediately joins/creates the channel on the dap hub
+        (master-enrolled relay), so agents enrolled via /agents/enroll can
+        join it with their clientSecret alone — no master secret needed.
+        If the hub is momentarily unreachable the join is retried on the
+        next relay reconnect.
       security:
         - authJwt: []
       parameters:

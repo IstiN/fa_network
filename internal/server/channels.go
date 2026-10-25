@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/IstiN/fa_network/internal/model"
 	"github.com/IstiN/fa_network/internal/store"
@@ -61,6 +63,9 @@ func (s *Server) createChannel(w http.ResponseWriter, r *http.Request) {
 	if req.Public {
 		s.addPublicChannel(r, networkID, channel.ID)
 	}
+	ensureCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	s.relay.EnsureChannel(ensureCtx, channel.ID)
+	cancel()
 	s.broadcastRosterSnapshot(r.Context(), networkID)
 	writeJSON(w, http.StatusCreated, model.ChannelWireOf(channel))
 }
