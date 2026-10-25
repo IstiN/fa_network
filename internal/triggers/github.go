@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 )
 
 // githubAPI performs one authenticated GitHub REST call. out may be nil
@@ -54,6 +55,9 @@ func truncate(b []byte, n int) string {
 // githubToken returns a credential for the repo: PAT when configured,
 // otherwise a GitHub App installation token.
 func (s *Service) githubToken(ctx context.Context, repo string) (string, error) {
+	if !validRepoSlug(repo) {
+		return "", fmt.Errorf("invalid github repo slug %q", repo)
+	}
 	if s.cfg.GitHubToken != "" {
 		return s.cfg.GitHubToken, nil
 	}
@@ -109,3 +113,10 @@ func (s *Service) ReactEyes(ctx context.Context, reaction Reaction) error {
 	url := fmt.Sprintf("%s/repos/%s/%s/comments/%s/reactions", s.cfg.GitHubAPIURL, reaction.Repo, kind, reaction.CommentID)
 	return githubAPI(ctx, s.http, http.MethodPost, url, token, map[string]string{"content": "eyes"}, nil)
 }
+
+// repoSlugRe bounds outbound repo path segments to the GitHub owner/repo
+// shape: no traversal, extra segments, or query smuggling — the value is
+// interpolated into authenticated API URLs (webhook/generic input).
+var repoSlugRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
+
+func validRepoSlug(repo string) bool { return repoSlugRe.MatchString(repo) }
