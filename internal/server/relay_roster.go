@@ -34,7 +34,7 @@ func (r *Relay) hubAgentMembers(networkID string, members []*model.Member) []*mo
 	sort.Strings(ids)
 	out := []*model.Member{}
 	for _, id := range ids {
-		if seen[id] || r.dropped[id] {
+		if seen[id] || r.droppedLocked(networkID, id) {
 			continue
 		}
 		info := r.hubAgents[id]

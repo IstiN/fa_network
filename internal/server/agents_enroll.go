@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"time"
+
+	"github.com/IstiN/fa_network/internal/store"
 )
 
 // agentNameRe mirrors the network name rules: DNS-label-ish, safe in
@@ -33,6 +35,16 @@ func (s *Server) enrollAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	// First-come name ownership: only the owning network may rotate the
+	// name-bound secret (cross-tenant rotation is a 409).
+	if err := s.st.ClaimAgentOwner(ctx, networkID, req.Name); err != nil {
+		if store.IsConflict(err) {
+			writeError(w, http.StatusConflict, CodeConflict, "agent name is owned by another network")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", "store error")
+		return
+	}
 	secret, err := s.hub.EnrollAgent(ctx, req.Name)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, CodeHubUnavailable, "hub enrollment failed")

@@ -5,26 +5,44 @@ import (
 	"log"
 )
 
-// loadDropped restores roster tombstones at relay start so dropped hub
-// agents never reappear after a restart/reseed.
+// loadDropped restores per-network roster exclusions at relay start.
 func (r *Relay) loadDropped(ctx context.Context) {
-	ids, err := r.st.DroppedHubAgentIDs(ctx)
+	drops, err := r.st.DroppedAgents(ctx)
 	if err != nil {
 		log.Printf("relay: load dropped hub agents: %v", err)
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, id := range ids {
-		r.dropped[id] = true
+	for networkID, ids := range drops {
+		if r.dropped[networkID] == nil {
+			r.dropped[networkID] = map[string]bool{}
+		}
+		for _, id := range ids {
+			r.dropped[networkID][id] = true
+		}
 	}
 }
 
-// dropHubAgent applies a roster tombstone in memory (the store already
-// persists it) and evicts the agent from the presence cache.
-func (r *Relay) dropHubAgent(agentID string) {
+// dropHubAgent applies a per-network roster exclusion in memory (the
+// store already persists it).
+func (r *Relay) dropHubAgent(networkID, agentID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.dropped[agentID] = true
-	delete(r.hubAgents, agentID)
+	if r.dropped[networkID] == nil {
+		r.dropped[networkID] = map[string]bool{}
+	}
+	r.dropped[networkID][agentID] = true
+}
+
+// isDropped reports the per-network exclusion (idempotent drop checks).
+func (r *Relay) isDropped(networkID, agentID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dropped[networkID][agentID]
+}
+
+// droppedLocked reads the exclusion while r.mu is held by the caller.
+func (r *Relay) droppedLocked(networkID, agentID string) bool {
+	return r.dropped[networkID][agentID]
 }

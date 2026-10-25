@@ -62,7 +62,7 @@ func TestRealHubChannelEnrollJoinIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	go relayClient.Run(ctx)
-	waitForCondition(t, "relay online", func() bool { return relayClient.Online() })
+	waitRelayOnline(t, relayClient)
 
 	st := store.NewMemStore()
 	provider := auth.NewMockProvider([]byte("0123456789abcdef0123456789abcdef"))
@@ -150,4 +150,18 @@ func hubChannelMembers(t *testing.T, adminURL, channelID string) int {
 		}
 	}
 	return 0
+}
+
+// waitRelayOnline allows for hub-binary startup and dial backoff (the
+// shared 2s test condition is too tight under -race).
+func waitRelayOnline(t *testing.T, client *hub.DapClient) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if client.Online() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("timeout waiting for relay online")
 }

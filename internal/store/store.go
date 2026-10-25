@@ -98,13 +98,26 @@ type Wakeups interface {
 	Dispatches(ctx context.Context, networkID, cursor string, limit int) (*model.Page[model.WakeupDispatch], error)
 }
 
-// DroppedHubAgents persists roster-removal tombstones for pure dap hub
-// agents. Tombstones are GLOBAL: hub agents are hub-scoped (they appear
-// in every network's roster), so a drop by any network manager removes
-// the entry everywhere and survives reseeds and restarts.
-type DroppedHubAgents interface {
-	DropHubAgent(ctx context.Context, agentID string) error
-	DroppedHubAgentIDs(ctx context.Context) ([]string, error)
+// AgentDrops persists PER-NETWORK roster exclusions for pure dap hub
+// agents: a manager hides an agent only in their own network, never in
+// other tenants' rosters (cross-tenant isolation).
+type AgentDrops interface {
+	DropAgent(ctx context.Context, networkID, agentID string) error
+	// DroppedAgents returns networkID -> dropped agentIDs (relay startup).
+	DroppedAgents(ctx context.Context) (map[string][]string, error)
+}
+
+// AgentOwnership records which network enrolled an agent name. It gates
+// secret rotation (re-enroll) and hub-admin eviction: only the owning
+// network may perform either.
+type AgentOwnership interface {
+	// ClaimAgentOwner reserves agentName for networkID (first-come).
+	// Re-claiming by the same network is a no-op; another network gets
+	// ErrConflict.
+	ClaimAgentOwner(ctx context.Context, networkID, agentName string) error
+	// AgentOwner returns the owning networkID (ErrNotFound = unowned,
+	// e.g. agents enrolled directly on the hub or before this registry).
+	AgentOwner(ctx context.Context, agentName string) (string, error)
 }
 
 // Store composes every persistence facet. One handle per process.
@@ -115,7 +128,8 @@ type Store interface {
 	Envelopes
 	Sessions
 	Wakeups
-	DroppedHubAgents
+	AgentDrops
+	AgentOwnership
 	// TouchActivity stamps network session activity (retention clock).
 	TouchActivity(ctx context.Context, networkID string, at time.Time) error
 	// DeleteNetworkData wipes a whole network (retention cleanup).

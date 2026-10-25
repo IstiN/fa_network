@@ -87,8 +87,15 @@ CREATE TABLE IF NOT EXISTS dispatches (
   note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS dispatches_network_seq ON dispatches (network_id, seq);
-CREATE TABLE IF NOT EXISTS dropped_hub_agents (
-  agent_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS agent_drops (
+  network_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (network_id, agent_id)
+);
+CREATE TABLE IF NOT EXISTS agent_owners (
+  agent_name TEXT PRIMARY KEY,
+  network_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
 `

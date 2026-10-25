@@ -5,22 +5,54 @@ import (
 	"sort"
 )
 
-// DropHubAgent implements DroppedHubAgents (idempotent tombstone).
-func (m *MemStore) DropHubAgent(_ context.Context, agentID string) error {
+// DropAgent implements AgentDrops (idempotent, per-network).
+func (m *MemStore) DropAgent(_ context.Context, networkID, agentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.dropped[agentID] = true
+	if m.dropped[networkID] == nil {
+		m.dropped[networkID] = map[string]bool{}
+	}
+	m.dropped[networkID][agentID] = true
 	return nil
 }
 
-// DroppedHubAgentIDs implements DroppedHubAgents.
-func (m *MemStore) DroppedHubAgentIDs(_ context.Context) ([]string, error) {
+// DroppedAgents implements AgentDrops.
+func (m *MemStore) DroppedAgents(_ context.Context) (map[string][]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	ids := make([]string, 0, len(m.dropped))
-	for id := range m.dropped {
-		ids = append(ids, id)
+	out := map[string][]string{}
+	for networkID, agents := range m.dropped {
+		ids := make([]string, 0, len(agents))
+		for id := range agents {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		out[networkID] = ids
 	}
-	sort.Strings(ids)
-	return ids, nil
+	return out, nil
+}
+
+// ClaimAgentOwner implements AgentOwnership (first-come reservation).
+func (m *MemStore) ClaimAgentOwner(_ context.Context, networkID, agentName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if owner, ok := m.owners[agentName]; ok {
+		if owner != networkID {
+			return ErrConflict
+		}
+		return nil
+	}
+	m.owners[agentName] = networkID
+	return nil
+}
+
+// AgentOwner implements AgentOwnership.
+func (m *MemStore) AgentOwner(_ context.Context, agentName string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	owner, ok := m.owners[agentName]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return owner, nil
 }

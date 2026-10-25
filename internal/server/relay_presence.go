@@ -7,15 +7,12 @@ import (
 	"github.com/IstiN/fa_network/internal/model"
 )
 
-// updateHubAgent refreshes the agent presence cache and notifies watchers.
-// Dropped agents are ignored entirely (no cache resurrection, no
-// presence.changed that would re-insert them into client rosters).
+// updateHubAgent refreshes the agent presence cache and notifies watchers
+// per network. Agents dropped in a network get no presence.changed there
+// (clients must not re-insert them); the cache itself stays global so
+// other networks keep seeing the agent.
 func (r *Relay) updateHubAgent(ctx context.Context, ev hub.Event) {
 	r.mu.Lock()
-	if r.dropped[ev.AgentID] {
-		r.mu.Unlock()
-		return
-	}
 	info, ok := r.hubAgents[ev.AgentID]
 	if !ok {
 		info = hub.PresenceInfo{AgentID: ev.AgentID, Name: ev.Name}
@@ -26,14 +23,21 @@ func (r *Relay) updateHubAgent(ctx context.Context, ev hub.Event) {
 	}
 	r.hubAgents[ev.AgentID] = info
 	r.mu.Unlock()
-	// Access scope is per-network: fan out per active network instead of
-	// one global frame (issue: roster access badges).
 	for _, networkID := range r.sessions.ActiveNetworks() {
+		if r.isDropped(networkID, ev.AgentID) {
+			continue
+		}
 		member := &model.Member{ID: ev.AgentID, NetworkID: networkID, Class: model.ClassAgent}
+		access := r.memberAccess(ctx, member)
+		// Recheck after the store read: a drop completed meanwhile must
+		// not be followed by a stale presence frame (review #15).
+		if r.isDropped(networkID, ev.AgentID) {
+			continue
+		}
 		r.sessions.BroadcastTo(networkID, presenceChangedWire{
 			MemberID: ev.AgentID, Presence: onlinePresence(ev.Online),
 			DisplayName: info.Name, Class: model.ClassAgent,
-			Access: r.memberAccess(ctx, member),
+			Access: access,
 		})
 	}
 }
