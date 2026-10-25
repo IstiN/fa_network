@@ -3,19 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/IstiN/fa_network/internal/auth"
 	"github.com/IstiN/fa_network/internal/hub"
-	"github.com/IstiN/fa_network/internal/store"
-	"github.com/IstiN/fa_network/internal/wakeup"
 )
 
 // TestRealHubChannelEnrollJoinIntegration reproduces the production
@@ -25,53 +18,9 @@ import (
 // channel on the hub. Runs when the dap source is available
 // (DAP_HUB_SRC or /tmp/dap-src/hub); skipped otherwise.
 func TestRealHubChannelEnrollJoinIntegration(t *testing.T) {
-	src := os.Getenv("DAP_HUB_SRC")
-	if src == "" {
-		src = "/tmp/dap-src/hub"
-	}
-	if _, err := os.Stat(filepath.Join(src, "go.mod")); err != nil {
-		t.Skipf("dap hub source unavailable at %s (set DAP_HUB_SRC)", src)
-	}
-	dir := t.TempDir()
-	hubBin := filepath.Join(dir, "daphub")
-	build := exec.Command("go", "build", "-o", hubBin, ".")
-	build.Dir = src
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build hub: %v\n%s", err, out)
-	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := l.Addr().String()
-	l.Close()
-	cmd := exec.Command(hubBin, "-addr", addr, "-master-secret", "master", "-admin-token", "adm",
-		"-channels-file", filepath.Join(dir, "channels.json"),
-		"-secrets-file", filepath.Join(dir, "secrets.json"))
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	hubURL := "ws://" + addr + "/ws"
-	relayClient, err := hub.NewDapClient(hub.DapConfig{URL: hubURL, MasterSecret: "master", Name: "fa-network-relay"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	go relayClient.Run(ctx)
-	waitRelayOnline(t, relayClient)
-
-	st := store.NewMemStore()
-	provider := auth.NewMockProvider([]byte("0123456789abcdef0123456789abcdef"))
-	dispatcher := wakeup.NewDispatcher(wakeup.Options{Store: st, Secret: []byte("sec")})
-	srv := New(st, provider, relayClient, dispatcher, Config{RetentionInactivityDays: 30, RetentionSweepInterval: time.Hour})
-	env := &testEnv{t: t, srv: srv, st: st, auth: provider}
-	srv.RunRelay(ctx)
-	env.http = httptest.NewServer(srv.Handler())
-	t.Cleanup(env.http.Close)
+	hubURL := startRealDapHub(t)
+	env, _ := newRealHubEnv(t, hubURL)
+	ctx := t.Context()
 
 	ownerToken := env.authedToken("owner1", "Owner One")
 	networkID := env.createNetwork(t, ownerToken, "istin-network", "secret123")
@@ -109,7 +58,7 @@ func TestRealHubChannelEnrollJoinIntegration(t *testing.T) {
 	}
 
 	// The hub registry must show the channel with relay+agent members.
-	adminURL := "http://" + addr + "/api/channels"
+	adminURL := "http" + strings.TrimPrefix(strings.TrimSuffix(hubURL, "/ws"), "ws") + "/api/channels"
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		members := hubChannelMembers(t, adminURL, channelID)
@@ -150,18 +99,4 @@ func hubChannelMembers(t *testing.T, adminURL, channelID string) int {
 		}
 	}
 	return 0
-}
-
-// waitRelayOnline allows for hub-binary startup and dial backoff (the
-// shared 2s test condition is too tight under -race).
-func waitRelayOnline(t *testing.T, client *hub.DapClient) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if client.Online() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatal("timeout waiting for relay online")
 }
