@@ -122,9 +122,15 @@ FA_NETWORK_ADDR=:9000 go run ./cmd/server
 Health probe: `GET /healthz`.
 
 Agent onboarding (external pure-dap agents): owner/admin calls
-`POST /api/networks/{id}/agents/enroll {name}` → one-shot hub enrollment,
-returns `{name, hubUrl, clientSecret}` **once** (never stored; re-enroll
-rotates). The hub master secret never leaves Secret Manager.
+`POST /api/networks/{id}/agents/enrollments {name}` to create an additional
+independent credential. It returns `{name, hubUrl, clientSecret}` **once**
+(never stored) and does not rotate earlier credentials, so one display name
+can serve multiple simultaneous agents. The same owning network may create
+repeatedly; another network gets `409`. Legacy
+`POST /api/networks/{id}/agents/enroll` remains the rotation/revocation path
+for all credentials bound to that name. Creation requires dap `enroll_create`;
+an old hub's `bad_frame` (`unknown op enroll_create`) fails safely and never
+falls back to rotation. The hub master secret never leaves Secret Manager.
 
 ## Dev mode (offline, zero dependencies)
 

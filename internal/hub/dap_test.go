@@ -17,15 +17,17 @@ import (
 // hubStub is a minimal dap/1 hub: validates the hello signature, answers
 // welcome, echoes joins, records sends, answers presence_query.
 type hubStub struct {
-	t       *testing.T
-	srv     *httptest.Server
-	mu      chan struct{}
-	sends   []frame
-	joins   int
-	conns   int
-	conn    *websocket.Conn
-	pubkey  string
-	verbose bool
+	t                  *testing.T
+	srv                *httptest.Server
+	mu                 chan struct{}
+	sends              []frame
+	enrollments        []string
+	rejectEnrollCreate bool
+	joins              int
+	conns              int
+	conn               *websocket.Conn
+	pubkey             string
+	verbose            bool
 }
 
 func newHubStub(t *testing.T) *hubStub {
@@ -87,8 +89,19 @@ func (h *hubStub) handleWS(w http.ResponseWriter, r *http.Request) {
 
 // route answers one frame; returns false when the connection should close.
 func (h *hubStub) route(ctx context.Context, conn *websocket.Conn, f frame) bool {
-	if f.str("t") == "enroll" {
-		return h.reply(ctx, conn, frame{"t": "enrolled", "secret": "stub-enroll-token"}) == nil
+	if operation := f.str("t"); operation == "enroll" || operation == "enroll_create" {
+		h.mu <- struct{}{}
+		h.enrollments = append(h.enrollments, operation)
+		reject := h.rejectEnrollCreate && operation == "enroll_create"
+		<-h.mu
+		if reject {
+			return h.reply(ctx, conn, frame{"op": "error", "code": "bad_frame", "msg": "unknown op " + operation}) == nil
+		}
+		secret := "stub-enroll-token"
+		if operation == "enroll_create" {
+			secret = "stub-create-token"
+		}
+		return h.reply(ctx, conn, frame{"t": "enrolled", "secret": secret}) == nil
 	}
 	switch f.str("op") {
 	case "hello":
@@ -114,6 +127,12 @@ func (h *hubStub) route(ctx context.Context, conn *websocket.Conn, f frame) bool
 		return h.reply(ctx, conn, frame{"op": "flushed", "count": 0}) == nil
 	}
 	return true
+}
+
+func (h *hubStub) enrollmentOperations() []string {
+	h.mu <- struct{}{}
+	defer func() { <-h.mu }()
+	return append([]string(nil), h.enrollments...)
 }
 
 // joinCount returns how many join frames arrived (all connections).

@@ -11,26 +11,28 @@ import (
 // online/offline transitions, per-channel ordered delivery, and a preset
 // presence roster. Not for production.
 type FakeClient struct {
-	mu       sync.Mutex
-	agentID  string
-	online   bool
-	sent     map[string][]Envelope
-	events   chan Event
-	presence []PresenceInfo
-	joined   map[string]bool
-	closed   bool
-	evicted  []string
-	evictErr error
+	mu           sync.Mutex
+	agentID      string
+	online       bool
+	sent         map[string][]Envelope
+	createCounts map[string]int
+	events       chan Event
+	presence     []PresenceInfo
+	joined       map[string]bool
+	closed       bool
+	evicted      []string
+	evictErr     error
 }
 
 // NewFakeClient returns an online fake with the given relay identity.
 func NewFakeClient(agentID string) *FakeClient {
 	return &FakeClient{
-		agentID: agentID,
-		online:  true,
-		sent:    map[string][]Envelope{},
-		events:  make(chan Event, 64),
-		joined:  map[string]bool{},
+		agentID:      agentID,
+		online:       true,
+		sent:         map[string][]Envelope{},
+		createCounts: map[string]int{},
+		events:       make(chan Event, 64),
+		joined:       map[string]bool{},
 	}
 }
 
@@ -43,6 +45,18 @@ func (f *FakeClient) EnrollAgent(_ context.Context, name string) (string, error)
 		return "", fmt.Errorf("hub offline")
 	}
 	return "fake-secret-" + name, nil
+}
+
+// CreateAgentCredential implements Client: each create for the same name
+// returns a new deterministic secret without changing legacy enroll results.
+func (f *FakeClient) CreateAgentCredential(_ context.Context, name string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.online {
+		return "", fmt.Errorf("hub offline")
+	}
+	f.createCounts[name]++
+	return fmt.Sprintf("fake-create-secret-%s-%d", name, f.createCounts[name]), nil
 }
 
 // HubURL implements Client.

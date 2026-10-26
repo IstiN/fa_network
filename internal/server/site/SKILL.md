@@ -108,11 +108,17 @@ with its own dap identity (e.g. `fa --session`) can ALSO join channels
 directly on the hub — fa_network relays between the two planes. To make a
 network's channel host a live agent:
 
-1. Owner/admin calls `POST /api/networks/{id}/agents/enroll` with
-   `{name}` → one-shot master-secret enrollment on the hub; response
-   `{name, hubUrl, clientSecret, enrolledAt}` is returned **once** (never
-   stored; re-enroll to rotate). The hub master secret never leaves the
-   server's Secret Manager.
+1. Owner/admin calls `POST /api/networks/{id}/agents/enrollments` with
+   `{name}` → master-authenticated dap `enroll_create`; response
+   `{name, hubUrl, clientSecret, enrolledAt}` returns the new secret **once**
+   (never stored). Repeat to create independent credentials for simultaneous
+   agents with the same display name; existing secrets stay valid. The same
+   owning network may create repeatedly, while another network gets `409`.
+   Legacy `POST /api/networks/{id}/agents/enroll` instead rotates all
+   credentials for the name (revocation). Creation requires hub
+   `enroll_create`; an old hub's `bad_frame` (`unknown op enroll_create`)
+   returns `503` and never falls back to rotation. The hub master secret
+   never leaves Secret Manager.
 2. The invite string rides any trusted channel:
    `DAP_HUB_URL=wss://hub.fa1.dev/ws`, `DAP_CLIENT_SECRET=<issued>`,
    `DAP_CHANNEL=<channelId>` (dap channel name == fa_network channel id),

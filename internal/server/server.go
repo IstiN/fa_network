@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{channelId}/messages", s.sendMessage)
 	mux.HandleFunc("GET /api/networks/{networkId}/agents", s.listAgents)
 	mux.HandleFunc("POST /api/networks/{networkId}/agents/enroll", s.enrollAgent)
+	mux.HandleFunc("POST /api/networks/{networkId}/agents/enrollments", s.createAgentCredential)
 	mux.HandleFunc("DELETE /api/networks/{networkId}/agents/{agentId}", s.dropAgent)
 	mux.HandleFunc("GET /api/networks/{networkId}/agents/{agentId}/wakeups", s.getWakeup)
 	mux.HandleFunc("POST /api/networks/{networkId}/agents/{agentId}/wakeups", s.registerWakeup)

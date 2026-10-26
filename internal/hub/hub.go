@@ -71,8 +71,12 @@ type Client interface {
 	Run(ctx context.Context) error
 	// EnrollAgent mints a name-bound client secret for an external agent
 	// (one-shot master-secret enrollment; secret returned once, never
-	// stored here). Re-enrolling a name rotates its secret.
+	// stored here). Re-enrolling a name rotates all credentials bound to it.
 	EnrollAgent(ctx context.Context, name string) (string, error)
+	// CreateAgentCredential mints an additional independent credential for
+	// name without rotating existing credentials. It uses dap enroll_create;
+	// implementations must not fall back to legacy enroll on failure.
+	CreateAgentCredential(ctx context.Context, name string) (string, error)
 	// HubURL is the hub endpoint for agent invite strings.
 	HubURL() string
 	// EvictAgent asks the hub admin API to evict an agent identity from

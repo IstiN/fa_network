@@ -3,6 +3,7 @@ package hub
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,59 @@ func TestDapClientEnrollAgent(t *testing.T) {
 	}
 	if secret != "stub-enroll-token" {
 		t.Fatalf("secret = %q", secret)
+	}
+	if ops := stub.enrollmentOperations(); len(ops) != 1 || ops[0] != "enroll" {
+		t.Fatalf("enrollment operations = %v, want [enroll]", ops)
+	}
+}
+
+func TestDapClientCreateAgentCredential(t *testing.T) {
+	stub := newHubStub(t)
+	d, err := NewDapClient(DapConfig{
+		URL: stub.url(), MasterSecret: "test-master-secret", Name: "relay-test",
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	secret, err := d.CreateAgentCredential(ctx, "ops-bot")
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	if secret != "stub-create-token" {
+		t.Fatalf("secret = %q", secret)
+	}
+	if ops := stub.enrollmentOperations(); len(ops) != 1 || ops[0] != "enroll_create" {
+		t.Fatalf("enrollment operations = %v, want [enroll_create]", ops)
+	}
+}
+
+func TestDapClientCreateAgentCredentialOldHubDoesNotRotate(t *testing.T) {
+	stub := newHubStub(t)
+	stub.rejectEnrollCreate = true
+	d, err := NewDapClient(DapConfig{
+		URL: stub.url(), MasterSecret: "test-master-secret", Name: "relay-test",
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	secret, err := d.CreateAgentCredential(ctx, "ops-bot")
+	if err == nil || !strings.Contains(err.Error(), "unknown op enroll_create") {
+		t.Fatalf("create against old hub: secret %q, err %v; want legacy unknown-op error", secret, err)
+	}
+	if !errors.Is(err, ErrUnknownOperation) {
+		t.Fatalf("error = %v, want ErrUnknownOperation", err)
+	}
+	if secret != "" {
+		t.Fatalf("secret = %q, want empty", secret)
+	}
+	if ops := stub.enrollmentOperations(); len(ops) != 1 || ops[0] != "enroll_create" {
+		t.Fatalf("old hub received operations %v; create must not fall back to enroll", ops)
 	}
 }
 

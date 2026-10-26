@@ -540,8 +540,9 @@ paths:
         channel (read-only for everyone except owner/admin) requires
         owner/admin (AC-B5).
         The relay immediately joins/creates the channel on the dap hub
-        (master-enrolled relay), so agents enrolled via /agents/enroll can
-        join it with their clientSecret alone — no master secret needed.
+        (master-enrolled relay), so agents enrolled via /agents/enroll or
+        /agents/enrollments can join with their clientSecret alone — no
+        master secret needed.
         If the hub is momentarily unreachable the join is retried on the
         next relay reconnect.
       security:
@@ -762,21 +763,85 @@ paths:
                 items:
                   $ref: '#/components/schemas/Agent'
 
+  /api/networks/{networkId}/agents/enrollments:
+    post:
+      tags: [agents]
+      summary: Create an additional external-agent credential (owner/admin)
+      description: |
+        Creates an **additional independent name-bound dap client secret**
+        for an external agent that talks dap/1 directly to the hub. After a
+        master-authenticated signed hello, the server sends `enroll_create`;
+        the master secret never leaves the server. Repeating this operation
+        for the same name and owning network does NOT rotate or revoke any
+        existing credential, allowing multiple simultaneous agent instances
+        with one display name. Each issued secret is returned only in its
+        creation response and is never stored by fa_network.
+        Agent names are first-come OWNED by the creating network: the same
+        owning network may create repeatedly; another network gets 409.
+        Guests and plain members are rejected exactly as for legacy enroll.
+        The dap hub must support `enroll_create`. An older hub's `bad_frame`
+        with `unknown op enroll_create` is surfaced as 503 and NEVER triggers
+        a fallback to legacy `enroll` (which would rotate credentials).
+        `unknown_op` is also recognized for forward compatibility.
+      security:
+        - authJwt: []
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentEnrollRequest'
+      responses:
+        '201':
+          description: Independent credential created; secret shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentEnrollResponse'
+        '400':
+          description: Invalid JSON or agent name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ForbiddenByClass'
+        '409':
+          description: Agent name owned by another network.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Hub unreachable or enroll_create unsupported; no rotation fallback occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/networks/{networkId}/agents/enroll:
     post:
       tags: [agents]
-      summary: Enroll an external (pure dap) agent (owner/admin)
+      summary: Enroll or rotate an external (pure dap) agent (owner/admin)
       description: |
-        Mints a **name-bound dap client secret** for an external agent that
-        talks dap/1 directly to the hub (no fa_network session). The server
-        performs a one-shot master-secret enrollment on the hub — the master
-        secret never leaves the server, and the issued client secret is
-        returned **exactly once** in this response (never stored). The agent
-        then connects with its own Ed25519 keypair, hello `name`, and this
-        secret (`DAP_CLIENT_SECRET`). Channel mapping is 1:1 — dap channel
-        name = fa_network channel id; private-channel keys still arrive only
-        via client-side chankey invites (the server never holds them).
-        Re-enrolling the same name ROTATES the secret (revocation path).
+        Legacy enrollment using dap `enroll`. It mints a **name-bound dap
+        client secret** for an external agent that talks dap/1 directly to
+        the hub (no fa_network session). The server performs a one-shot
+        master-secret enrollment on the hub — the master secret never leaves
+        the server, and the issued client secret is returned **exactly once**
+        in this response (never stored). The agent then connects with its own
+        Ed25519 keypair, hello `name`, and this secret (`DAP_CLIENT_SECRET`).
+        Channel mapping is 1:1 — dap channel name = fa_network channel id;
+        private-channel keys still arrive only via client-side chankey
+        invites (the server never holds them).
+        Re-enrolling the same name ROTATES ALL credentials for that name
+        (revocation path). To add an independent credential without rotating
+        existing ones, use POST /agents/enrollments instead.
         Agent names are first-come OWNED by the enrolling network: only
         the owning network may re-enroll/rotate; another network gets
         409 (cross-tenant secret rotation is forbidden). Guests and
@@ -1190,7 +1255,7 @@ components:
         name:
           type: string
           pattern: '^[a-z0-9][a-z0-9-]{2,63}$'
-          description: dap hello name the secret is bound to (unique per agent).
+          description: dap hello display name bound to the secret; independent credentials may share it via enrollments.
 
     AgentEnrollResponse:
       type: object
@@ -1203,8 +1268,9 @@ components:
         clientSecret:
           type: string
           description: |
-            Name-bound hub client secret — DAP_CLIENT_SECRET. Returned ONCE;
-            store it immediately (re-enroll rotates).
+            Name-bound hub client secret — DAP_CLIENT_SECRET. Returned ONCE
+            per issuance; store it immediately. enrollments creates an
+            independent credential; legacy enroll rotates all for the name.
         enrolledAt: { type: string, format: date-time }
         note: { type: string }
 

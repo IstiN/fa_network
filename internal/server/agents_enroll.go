@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"time"
 
+	"github.com/IstiN/fa_network/internal/hub"
 	"github.com/IstiN/fa_network/internal/store"
 )
 
@@ -18,12 +20,25 @@ type agentEnrollInput struct {
 	Name string `json:"name"`
 }
 
-// enrollAgent implements POST /api/networks/{id}/agents/enroll
-// (owner/admin). Mints a name-bound dap client secret for an external
-// (pure dap) agent via a one-shot master-secret enrollment; the master
-// secret never leaves the server and the issued secret is returned exactly
-// once — re-enrolling the same name rotates it (revocation path).
+type agentCredentialIssuer func(context.Context, string) (string, error)
+
+// enrollAgent implements legacy POST /api/networks/{id}/agents/enroll.
+// Re-enrolling the same name rotates its name-bound credentials (revocation).
 func (s *Server) enrollAgent(w http.ResponseWriter, r *http.Request) {
+	s.handleAgentEnrollment(w, r, s.hub.EnrollAgent,
+		"store clientSecret now — it is never stored or returned again; re-enroll to rotate")
+}
+
+// createAgentCredential implements POST /api/networks/{id}/agents/enrollments.
+// Every call creates an additional independent credential for the same name.
+func (s *Server) createAgentCredential(w http.ResponseWriter, r *http.Request) {
+	s.handleAgentEnrollment(w, r, s.hub.CreateAgentCredential,
+		"store clientSecret now — it is never stored or returned again; create does not rotate other credentials")
+}
+
+// handleAgentEnrollment shares validation, manager authorization, first-come
+// ownership, and the AgentEnrollment response between create and rotate.
+func (s *Server) handleAgentEnrollment(w http.ResponseWriter, r *http.Request, issue agentCredentialIssuer, note string) {
 	networkID := r.PathValue("networkId")
 	if s.requireManager(w, r, networkID) == nil {
 		return
@@ -35,8 +50,8 @@ func (s *Server) enrollAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	// First-come name ownership: only the owning network may rotate the
-	// name-bound secret (cross-tenant rotation is a 409).
+	// First-come name ownership: only the owning network may create or
+	// rotate name-bound credentials (cross-tenant access is a 409).
 	if err := s.st.ClaimAgentOwner(ctx, networkID, req.Name); err != nil {
 		if store.IsConflict(err) {
 			writeError(w, http.StatusConflict, CodeConflict, "agent name is owned by another network")
@@ -45,9 +60,13 @@ func (s *Server) enrollAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return
 	}
-	secret, err := s.hub.EnrollAgent(ctx, req.Name)
+	secret, err := issue(ctx, req.Name)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, CodeHubUnavailable, "hub enrollment failed")
+		message := "hub enrollment failed"
+		if errors.Is(err, hub.ErrUnknownOperation) {
+			message = err.Error()
+		}
+		writeError(w, http.StatusServiceUnavailable, CodeHubUnavailable, message)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -55,6 +74,6 @@ func (s *Server) enrollAgent(w http.ResponseWriter, r *http.Request) {
 		"hubUrl":       s.hub.HubURL(),
 		"clientSecret": secret,
 		"enrolledAt":   s.cfg.Now().UTC().Format(time.RFC3339),
-		"note":         "store clientSecret now — it is never stored or returned again; re-enroll to rotate",
+		"note":         note,
 	})
 }
