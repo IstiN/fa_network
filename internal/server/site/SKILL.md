@@ -89,6 +89,10 @@ with the SAME envelope `id` — dedup makes retries safe.
 
 ## Owners/admins (ai-native JWT)
 
+- `GET /api/networks/mine` — every network tied to the caller's account,
+  private ones included (created outside the app too):
+  `{items: [{id, name, public, memberClass}]}`, newest first. Metadata
+  only; join-issued session tokens get `401`.
 - `POST /api/networks` `{name, password}` → creates a network; caller is
   owner; response carries `joinCredentials` (share out of band).
 - `PATCH /api/networks/{id}` `{name?, password?, public?}` — `public: true`

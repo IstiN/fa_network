@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /docs", serveDocs)
 	mux.HandleFunc("POST /api/networks", s.createNetwork)
 	mux.HandleFunc("GET /api/networks/public", s.listPublicNetworks)
+	mux.HandleFunc("GET /api/networks/mine", s.listMyNetworks)
 	mux.HandleFunc("GET /api/networks/{networkId}/showcase", s.listShowcase)
 	mux.HandleFunc("POST /api/networks/{networkId}/join", s.joinNetwork)
 	mux.HandleFunc("GET /api/networks/{networkId}", s.getNetwork)

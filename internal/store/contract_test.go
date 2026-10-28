@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -296,6 +296,76 @@ func ContractTest(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("empty memberCount = %d, %v; want 0", empty, err)
 		}
 	})
+
+	t.Run("account networks discovery", func(t *testing.T) {
+		s := newStore(t)
+		defer s.Close(ctx)
+		base := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
+		mk := func(id, name string, at time.Time, public bool, owner string) {
+			n := &model.Network{
+				ID: id, Name: name, OwnerID: owner, Public: public, CreatedAt: at,
+				PasswordHash: []byte("h"), PasswordSalt: []byte("s"),
+			}
+			if err := s.CreateNetwork(ctx, n); err != nil {
+				t.Fatalf("create %s: %v", id, err)
+			}
+		}
+		// b-net and c-net share a createdAt: id DESC is the tie-break.
+		mk("b-net", "beta", base, false, "u1")
+		mk("a-net", "alpha", base.Add(time.Second), true, "u1")
+		mk("c-net", "gamma", base, false, "u2")
+		join := func(networkID, userID, class string) {
+			m := &model.Member{ID: userID, NetworkID: networkID, Class: class, DisplayName: userID}
+			if err := s.UpsertMember(ctx, m); err != nil {
+				t.Fatalf("upsert %s/%s: %v", networkID, userID, err)
+			}
+		}
+		join("b-net", "u1", model.ClassOwner)
+		join("a-net", "u1", model.ClassAdmin)
+		join("b-net", "guest-x", model.ClassGuest)
+
+		// Every membership row of u1, newest network first, id DESC tie.
+		got, err := s.AccountNetworks(ctx, "u1")
+		if err != nil {
+			t.Fatalf("account networks: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("rows = %v, want 2 (private + public alike)", accountIDs(got))
+		}
+		if got[0].Network.ID != "a-net" || got[1].Network.ID != "b-net" {
+			t.Fatalf("order = %v, want [a-net b-net] (createdAt DESC, id DESC)", accountIDs(got))
+		}
+		if got[0].MemberClass != model.ClassAdmin || !got[0].Network.Public {
+			t.Fatalf("a-net row = %+v, want admin/public", got[0])
+		}
+		if got[1].MemberClass != model.ClassOwner || got[1].Network.Public {
+			t.Fatalf("b-net row = %+v, want owner/private", got[1])
+		}
+
+		// A guest-class row is listed too when it carries the user id.
+		guestRows, err := s.AccountNetworks(ctx, "guest-x")
+		if err != nil || len(guestRows) != 1 || guestRows[0].Network.ID != "b-net" ||
+			guestRows[0].MemberClass != model.ClassGuest {
+			t.Fatalf("guest rows: %v %v", guestRows, err)
+		}
+
+		// Ownership alone (no membership row, e.g. row deleted) lists
+		// nothing — the API seeds an owner row on create, so owners do
+		// not rely on this fallback.
+		foreign, err := s.AccountNetworks(ctx, "u2")
+		if err != nil || len(foreign) != 0 {
+			t.Fatalf("u2 rows = %v %v, want none (no membership row)", accountIDs(foreign), err)
+		}
+
+		// Deleting the membership drops the network from the listing.
+		if err := s.DeleteMember(ctx, "b-net", "u1"); err != nil {
+			t.Fatalf("delete member: %v", err)
+		}
+		after, err := s.AccountNetworks(ctx, "u1")
+		if err != nil || len(after) != 1 || after[0].Network.ID != "a-net" {
+			t.Fatalf("after delete = %v %v, want [a-net]", accountIDs(after), err)
+		}
+	})
 }
 
 // idsOf projects network ids for test diagnostics.
@@ -303,6 +373,15 @@ func idsOf(networks []*model.Network) []string {
 	out := make([]string, 0, len(networks))
 	for _, n := range networks {
 		out = append(out, n.ID)
+	}
+	return out
+}
+
+// accountIDs projects account-network ids for test diagnostics.
+func accountIDs(rows []*model.AccountNetwork) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Network.ID)
 	}
 	return out
 }

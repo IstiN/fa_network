@@ -23,7 +23,8 @@ if [ ! -x "$BIN" ]; then
 fi
 
 set +e
-./bin/crap4go --run-tests --threshold 12 .
+# Analyze the project only — never the cloned tool itself.
+./bin/crap4go --run-tests --threshold 12 cmd internal
 status=$?
 set -e
 

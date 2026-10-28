@@ -64,6 +64,44 @@ func (p *PGStore) PublicNetworks(ctx context.Context, after time.Time, afterID s
 	return p.scanNetworks(rows)
 }
 
+// AccountNetworks implements Members: JOIN membership rows to networks
+// for one user, newest network first, id DESC as the stable tie-break.
+func (p *PGStore) AccountNetworks(ctx context.Context, userID string) ([]*model.AccountNetwork, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT n.id, n.name, n.owner_id, n.admins, n.public_channels,
+		        n.password_hash, n.password_salt, n.public, n.created_at, m.class
+		 FROM networks n JOIN members m ON m.network_id = n.id
+		 WHERE m.id = $1
+		 ORDER BY n.created_at DESC, n.id DESC`, userID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	return scanAccountNetworks(rows)
+}
+
+// scanAccountNetworks decodes joined (network, class) rows.
+func scanAccountNetworks(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}) ([]*model.AccountNetwork, error) {
+	var out []*model.AccountNetwork
+	for rows.Next() {
+		n := &model.Network{}
+		var class string
+		var admins, publicChannels []byte
+		if err := rows.Scan(&n.ID, &n.Name, &n.OwnerID, &admins, &publicChannels,
+			&n.PasswordHash, &n.PasswordSalt, &n.Public, &n.CreatedAt, &class); err != nil {
+			return nil, mapErr(err)
+		}
+		_ = unmarshalJSON(admins, &n.Admins)
+		_ = unmarshalJSON(publicChannels, &n.PublicChannels)
+		out = append(out, &model.AccountNetwork{Network: n, MemberClass: class})
+	}
+	return out, mapErr(rows.Err())
+}
+
 // MemberCount implements Networks.
 func (p *PGStore) MemberCount(ctx context.Context, networkID string) (int, error) {
 	var count int

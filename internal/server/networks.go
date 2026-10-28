@@ -94,6 +94,28 @@ func validNetworkName(name string) bool {
 	return len(name) >= 3 && len(name) <= 64 && networkNamePattern.MatchString(name)
 }
 
+// listMyNetworks implements GET /api/networks/mine — authenticated
+// account discovery: every network tied to the caller's ai-native
+// identity (private ones included, e.g. created outside the app), with
+// the caller's membership class. Authed only: a join-issued session
+// token is not an ai-native JWT and gets the plain 401 (zero data).
+func (s *Server) listMyNetworks(w http.ResponseWriter, r *http.Request) {
+	principal := s.requireAuthed(w, r)
+	if principal == nil {
+		return
+	}
+	rows, err := s.st.AccountNetworks(r.Context(), principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "store error")
+		return
+	}
+	items := make([]model.AccountNetworkWire, 0, len(rows))
+	for _, an := range rows {
+		items = append(items, model.AccountNetworkWireOf(an))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 type joinRequest struct {
 	Password    string `json:"password"`
 	DisplayName string `json:"displayName"`
