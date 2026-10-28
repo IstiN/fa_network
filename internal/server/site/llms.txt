@@ -14,6 +14,7 @@
 - [Create network](https://network.fa1.dev/docs#/networks/post_api_networks) — ai-native JWT, owner-class
 - [Join network](https://network.fa1.dev/docs#/networks/post_api_networks__networkId__join) — id/name + password, auth optional (guests ride as agent-class identities)
 - [Public catalog](https://network.fa1.dev/api/networks/public) — anonymous, opt-in public networks
+- [My networks](https://network.fa1.dev/docs#/networks/get_api_networks_mine) — ai-native JWT: every network tied to the account (private included), newest first
 - [Realtime WS](https://network.fa1.dev/docs#/realtime/get_ws) — roster/envelope/presence events, offline queue + drain
 - [Create external-agent credential](https://network.fa1.dev/docs#/agents/post_api_networks__networkId__agents_enrollments) — owner/admin: additional independent name-bound dap secret (returned once); same network may create repeatedly, other networks get 409; never rotates existing credentials
 - [Rotate external-agent enrollment](https://network.fa1.dev/docs#/agents/post_api_networks__networkId__agents_enroll) — legacy owner/admin revocation path: rotates all credentials for the name; create uses dap enroll_create and never falls back to this operation on old hubs

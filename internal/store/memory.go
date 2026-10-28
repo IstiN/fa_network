@@ -168,6 +168,35 @@ func keysetAfter(n *model.Network, after time.Time, afterID string) bool {
 	return n.ID > afterID
 }
 
+// AccountNetworks implements Members: every membership row of the user
+// joined to its network, newest network first, id DESC as the stable
+// tie-break.
+func (m *MemStore) AccountNetworks(_ context.Context, userID string) ([]*model.AccountNetwork, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*model.AccountNetwork
+	for _, mem := range m.members {
+		if mem.ID != userID {
+			continue
+		}
+		if n, ok := m.networks[mem.NetworkID]; ok {
+			out = append(out, &model.AccountNetwork{Network: cloneNetwork(n), MemberClass: mem.Class})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return newerNetworkFirst(out[i].Network, out[j].Network)
+	})
+	return out, nil
+}
+
+// newerNetworkFirst is the account-listing order: createdAt DESC, id DESC.
+func newerNetworkFirst(a, b *model.Network) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+	return a.ID > b.ID
+}
+
 // MemberCount implements Networks.
 func (m *MemStore) MemberCount(_ context.Context, networkID string) (int, error) {
 	m.mu.RLock()

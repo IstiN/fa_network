@@ -339,6 +339,31 @@ paths:
         '429':
           $ref: '#/components/responses/Throttled'
 
+  /api/networks/mine:
+    get:
+      tags: [networks]
+      summary: My networks (authed account discovery)
+      description: |
+        Every network tied to the caller's ai-native account — private ones
+        included (e.g. created outside the browser app). Requires a valid
+        ai-native JWT: join-issued session tokens and guests get `401`
+        with zero data. Entries are metadata only — no passwords, no owner
+        or admin identity, no channel or session material. Ordered by
+        network `createdAt` descending, `id` descending as the stable
+        tie-break. `memberClass` is the caller's membership-row class in
+        that network (owner, admin, member, guest, agent).
+      security:
+        - authJwt: []
+      responses:
+        '200':
+          description: Networks the account belongs to, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountNetworks'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /api/networks/{networkId}/showcase:
     get:
       tags: [networks]
@@ -1143,6 +1168,31 @@ components:
           items:
             $ref: '#/components/schemas/PublicNetwork'
         nextCursor: { type: string }
+
+    AccountNetwork:
+      type: object
+      required: [id, name, public, memberClass]
+      description: One network of the caller's account listing.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        public:
+          type: boolean
+          description: Discovery-catalog opt-in flag; private networks are listed here regardless.
+        memberClass:
+          type: string
+          enum: [owner, admin, member, guest, agent]
+          description: The caller's membership class in the network.
+
+    AccountNetworks:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: Every membership row of the caller, newest network first (createdAt DESC, id DESC tie-break).
+          items:
+            $ref: '#/components/schemas/AccountNetwork'
 
     Network:
       type: object

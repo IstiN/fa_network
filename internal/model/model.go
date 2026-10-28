@@ -59,6 +59,14 @@ type Member struct {
 	Access *AccessWire
 }
 
+// AccountNetwork is one row of an authenticated account's network list:
+// the network itself plus the caller's membership class in it (every
+// membership row, private and public networks alike).
+type AccountNetwork struct {
+	Network     *Network
+	MemberClass string
+}
+
 // Channel is a dap channel mirrored by the relay.
 type Channel struct {
 	ID            string

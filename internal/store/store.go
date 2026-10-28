@@ -47,6 +47,11 @@ type Members interface {
 	MemberByName(ctx context.Context, networkID, displayName string) (*model.Member, error)
 	UpdateMemberPresence(ctx context.Context, networkID, memberID, presence string) error
 	DeleteMember(ctx context.Context, networkID, memberID string) error
+	// AccountNetworks lists every network the user has a membership row
+	// in (any class — owner/admin/member/guest/agent rows alike, private
+	// and public networks), newest network first, id DESC as the stable
+	// tie-break (GET /api/networks/mine).
+	AccountNetworks(ctx context.Context, userID string) ([]*model.AccountNetwork, error)
 }
 
 // Channels persists channel metadata (retentionDays included).

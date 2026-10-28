@@ -51,6 +51,27 @@ type PublicNetworkWire struct {
 	MemberCount    int    `json:"memberCount"`
 }
 
+// AccountNetworkWire is the authenticated account-discovery projection
+// (GET /api/networks/mine): minimal network facts plus the caller's
+// membership class. Never carries secrets, owner/admin identity, channel
+// material, or session tokens.
+type AccountNetworkWire struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Public      bool   `json:"public"`
+	MemberClass string `json:"memberClass"`
+}
+
+// AccountNetworkWireOf projects an AccountNetwork for the API.
+func AccountNetworkWireOf(an *AccountNetwork) AccountNetworkWire {
+	return AccountNetworkWire{
+		ID:          an.Network.ID,
+		Name:        an.Network.Name,
+		Public:      an.Network.Public,
+		MemberClass: an.MemberClass,
+	}
+}
+
 // MemberWire is the roster projection.
 type MemberWire struct {
 	ID          string `json:"id"`
