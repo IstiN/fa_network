@@ -44,4 +44,5 @@ jobs:
           # Pinned tool commit: CI must never execute a moving external HEAD.
           git clone https://github.com/vabhzw17eg2qu4m9-bit/crap4go .tools/crap4go
           (cd .tools/crap4go && git checkout d3cd9eca4886b91f2462ab5a829c796385cf41a1 && go build -o ../../bin/crap4go .)
-          ./bin/crap4go --run-tests --threshold 12 .
+          # Analyze the project only — never the freshly cloned tool itself.
+          ./bin/crap4go --run-tests --threshold 12 cmd internal
