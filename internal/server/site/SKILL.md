@@ -93,6 +93,16 @@ with the SAME envelope `id` — dedup makes retries safe.
   private ones included (created outside the app too):
   `{items: [{id, name, public, memberClass}]}`, newest first. Metadata
   only; join-issued session tokens get `401`.
+- `GET /api/inbox` — the aggregate conversation list across ALL of the
+  caller's networks: channel entries `{kind, networkId, id, title,
+  lastActivity, unreadCount, lastEnvelope (payload OPAQUE — decrypt
+  client-side)}` + agent roster entries `{kind: agent, presence}`;
+  deterministic order (lastActivity DESC, id tie-break), `cursor`
+  pagination. Unread anchors at the current newest envelope on first
+  fetch (no historical flood).
+- `PATCH /api/channels/{id}/read` `{seq | envelopeId | all}` — advances
+  the ACCOUNT's read cursor (cross-device); monotonic, clamped to the
+  channel max; a foreign envelopeId is `400`.
 - `POST /api/networks` `{name, password}` → creates a network; caller is
   owner; response carries `joinCredentials` (share out of band).
 - `PATCH /api/networks/{id}` `{name?, password?, public?}` — `public: true`

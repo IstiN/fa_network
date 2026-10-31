@@ -167,6 +167,9 @@ type AgentWire struct {
 	DisplayName      string `json:"displayName"`
 	Presence         string `json:"presence"`
 	WakeupRegistered bool   `json:"wakeupRegistered"`
+	// LastSeen is the hub's last-activity time when the relay knows one
+	// (roster render hint; zero/omitted otherwise).
+	LastSeen *time.Time `json:"lastSeen,omitempty"`
 }
 
 // WakeupRegistrationWire hides the stored secret (never returned).
@@ -174,6 +177,31 @@ type WakeupRegistrationWire struct {
 	URL             string    `json:"url"`
 	DebounceSeconds int       `json:"debounceSeconds"`
 	CreatedAt       time.Time `json:"createdAt"`
+}
+
+// InboxItemWire is one conversation of the aggregate inbox: a channel
+// (with unread + opaque last envelope for client-side preview decrypt)
+// or a roster agent (presence-only, no unread). Sorted by lastActivity
+// DESC with (kind, networkId, id) as the stable tie-break.
+type InboxItemWire struct {
+	Kind      string    `json:"kind"` // "channel" | "agent"
+	NetworkID string    `json:"networkId"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	// LastActivity is RFC3339; null for empty channels and agents
+	// without a hub lastSeen.
+	LastActivity *time.Time    `json:"lastActivity"`
+	UnreadCount  *int          `json:"unreadCount,omitempty"` // channels only
+	LastEnvelope *EnvelopeWire `json:"lastEnvelope,omitempty"` // channels only
+	// Presence is the roster hint for agent entries ("" on channels).
+	Presence string `json:"presence,omitempty"`
+}
+
+// InboxResponseWire is the GET /api/inbox envelope. NextCursor is the
+// opaque continuation token (absent on the last page).
+type InboxResponseWire struct {
+	Items      []InboxItemWire `json:"items"`
+	NextCursor string          `json:"nextCursor,omitempty"`
 }
 
 // WakeupDispatchWire is one dispatch-log entry.

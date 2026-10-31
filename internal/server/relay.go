@@ -291,11 +291,17 @@ func (r *Relay) hubAgentsWires(ctx context.Context, networkID string, existing [
 		if seen[info.AgentID] || r.isDropped(networkID, info.AgentID) {
 			continue
 		}
+		var lastSeen *time.Time
+		if !info.LastSeen.IsZero() {
+			ls := info.LastSeen
+			lastSeen = &ls
+		}
 		wires = append(wires, model.AgentWire{
 			AgentID:          info.AgentID,
 			DisplayName:      info.Name,
 			Presence:         onlinePresence(info.Online),
 			WakeupRegistered: r.registered(ctx, networkID, info.AgentID),
+			LastSeen:         lastSeen,
 		})
 	}
 	return wires
