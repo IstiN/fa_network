@@ -22,8 +22,10 @@ func (m *MemStore) AppendEnvelope(_ context.Context, e *model.Envelope) (bool, e
 	}
 	seen[e.ID] = true
 	m.envSeq++
+	m.chanSeq[e.ChannelID]++
 	cp := *e
 	cp.Mentions = append([]string(nil), e.Mentions...)
+	cp.Seq = m.chanSeq[e.ChannelID]
 	m.envs[e.ChannelID] = append(m.envs[e.ChannelID], cp)
 	return true, nil
 }

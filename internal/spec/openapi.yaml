@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: fa_network API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     People-facing edge of the fa agent network: a relay-only REST+WS bridge
     between browsers/apps and the [dap](https://github.com/vabhzw17eg2qu4m9-bit/dap)
@@ -718,6 +718,91 @@ paths:
         '429':
           $ref: '#/components/responses/Throttled'
 
+  /api/channels/{channelId}/read:
+    patch:
+      tags: [messages]
+      summary: Mark channel read (member; per-account cursor)
+      description: |
+        Advance the CALLER's read cursor of one channel — the position
+        belongs to the ai-native ACCOUNT (cross-device unread), not to a
+        device or session. Requires a valid ai-native JWT and a membership
+        row in the channel's network (session-token/guest callers get the
+        generic 401/404 — no existence oracle, E1). Positions are the
+        channel's monotonic envelope sequence and NEVER move backwards:
+        an older `seq`/`envelopeId` than the stored cursor is accepted
+        (204) but ignored. Incoming `seq` values are clamped to the
+        channel's current max — a client can never push its cursor into
+        the future. `envelopeId` must belong to THIS channel; a foreign
+        or unknown id is `400 bad_request`.
+      security:
+        - authJwt: []
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadMarkInput'
+      responses:
+        '204':
+          description: Cursor advanced (or already ahead — monotonic no-op).
+        '400':
+          description: Invalid body, or an envelopeId not of this channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Unknown channel (generic, E1).
+
+  /api/inbox:
+    get:
+      tags: [networks]
+      summary: Aggregate inbox (authed; all networks)
+      description: |
+        The account-scoped unified conversation list across EVERY network
+        the caller holds a membership row in — the All-networks inbox of
+        an A-Messenger-style chat list. Requires a valid ai-native JWT
+        (session tokens get the plain `401`, like `/api/networks/mine`).
+
+        Entries are typed: `channel` conversations carry the per-ACCOUNT
+        unread count and an OPAQUE last envelope (payload stays
+        ciphertext — previews decrypt client-side; the server counts
+        rows, it never reads content, law #1) and `agent` roster entries
+        carry a presence hint only (no unread, no envelope).
+
+        Unread semantics: a channel without a read row (first aggregate
+        fetch of a new account/device) is anchored at its current newest
+        envelope — no historical unread flood; only mail arriving AFTER
+        the first fetch counts.
+
+        Ordering is deterministic: `lastActivity` DESC (empty channels
+        and agents without a hub lastSeen sort last), then
+        (networkId, id) DESC as the stable tie-break. `cursor` paginates
+        the same total order — no duplicates, no gaps across pages.
+      security:
+        - authJwt: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+        - name: cursor
+          in: query
+          description: Opaque continuation token from `nextCursor`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The aggregate inbox page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inbox'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /ws:
     get:
       tags: [realtime]
@@ -1194,6 +1279,70 @@ components:
           items:
             $ref: '#/components/schemas/AccountNetwork'
 
+    ReadMarkInput:
+      type: object
+      description: |
+        One of `seq`, `envelopeId`, or `all`. Positions are monotonic and
+        clamped to the channel's current max; an older position is a
+        silent no-op (204). `envelopeId` must belong to this channel.
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Raw position (from a previously fetched envelope).
+        envelopeId:
+          type: string
+          description: Client envelope id — resolved to its position server-side.
+        all:
+          type: boolean
+          description: Mark everything currently stored in the channel read.
+
+    InboxItem:
+      type: object
+      required: [kind, networkId, id]
+      properties:
+        kind:
+          type: string
+          enum: [channel, agent]
+        networkId: { type: string }
+        id:
+          type: string
+          description: Channel id (channel) or agent id (agent).
+        title:
+          type: string
+          description: Channel name or agent display name; may be empty — clients shorten 64-hex channel ids themselves.
+        lastActivity:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last envelope time (channels); hub lastSeen when known (agents); null otherwise.
+        unreadCount:
+          type: integer
+          description: Channels only — envelopes beyond the account's read cursor.
+        lastEnvelope:
+          allOf:
+            - $ref: '#/components/schemas/Envelope'
+          description: |
+            Channels only — the newest stored envelope. `payload` is
+            opaque ciphertext (or raw public-channel bytes); preview
+            decryption is client-side.
+        presence:
+          type: string
+          enum: [live, busy, offline]
+          description: Agent entries only — roster render hint.
+
+    Inbox:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxItem'
+        nextCursor:
+          type: string
+          description: Opaque continuation token; absent on the last page.
+
     Network:
       type: object
       required: [id, name, ownerId, publicChannels]
@@ -1297,6 +1446,14 @@ components:
           type: string
           enum: [live, busy, offline]
         wakeupRegistered: { type: boolean }
+        lastSeen:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Hub last-activity time when the relay knows one (additive,
+            omitempty — roster render hint for inbox ordering; null for
+            member-class agents without a hub presence row).
 
     AgentEnrollRequest:
       type: object

@@ -76,10 +76,41 @@ type Envelopes interface {
 	// LATEST page, a cursor = the page strictly older than it. Items are
 	// ascending within the page; NextCursor points to older messages.
 	Envelopes(ctx context.Context, channelID, before string, limit int) (*model.Page[model.Envelope], error)
+	// EnvelopeByID resolves one stored envelope (ErrNotFound when the id
+	// is unknown in the channel — read cursors reject foreign ids).
+	EnvelopeByID(ctx context.Context, channelID, id string) (*model.Envelope, error)
 	DeleteEnvelopesBefore(ctx context.Context, channelID string, cutoff time.Time) (int64, error)
 	DeleteEnvelopes(ctx context.Context, channelID string) error
 	// ChannelBytes is the per-channel stored-byte guard (abuse cap).
 	ChannelBytes(ctx context.Context, channelID string) (int64, error)
+}
+
+// ReadState persists per-USER channel read cursors (cross-device unread:
+// the position belongs to the account, not a device). Positions are the
+// envelope Seq — monotonic inside a channel, never moved backwards.
+type ReadState interface {
+	// ReadCursor returns the user's stored position (0 = never read).
+	ReadCursor(ctx context.Context, userID, channelID string) (int64, error)
+	// MarkRead advances the cursor to seq, clamped to the channel's
+	// current max and never backwards.
+	MarkRead(ctx context.Context, userID, channelID string, seq int64) error
+	// BaselineRead materializes the cursor at the channel's current max
+	// when the user has no row yet (unread-0 history on first aggregate
+	// fetch); a no-op when a row exists. Returns the effective cursor.
+	BaselineRead(ctx context.Context, userID, channelID string) (int64, error)
+	// ChannelMaxSeq is the channel's newest envelope Seq (0 when empty).
+	ChannelMaxSeq(ctx context.Context, channelID string) (int64, error)
+}
+
+// Inbox aggregates the caller's channel conversations across EVERY
+// network they hold a membership row in (account-scoped like
+// AccountNetworks). Payloads stay opaque — the server counts rows, it
+// never reads content.
+type Inbox interface {
+	// InboxEntries returns every channel conversation (capped at
+	// inboxMaxEntries) with the newest envelope and the per-user unread
+	// count; order is assembly-defined (the handler sorts and paginates).
+	InboxEntries(ctx context.Context, userID string) ([]*model.InboxEntry, error)
 }
 
 // Sessions persists browser session tokens (activity = retention clock).
@@ -131,6 +162,8 @@ type Store interface {
 	Members
 	Channels
 	Envelopes
+	ReadState
+	Inbox
 	Sessions
 	Wakeups
 	AgentDrops

@@ -67,6 +67,16 @@ type AccountNetwork struct {
 	MemberClass string
 }
 
+// InboxEntry is one channel conversation of the aggregate inbox: the
+// channel, its newest envelope (nil when empty — previews decrypt
+// client-side, the payload stays opaque), and the per-user unread count
+// (envelopes with Seq beyond the user's read cursor).
+type InboxEntry struct {
+	Channel      *Channel
+	LastEnvelope *Envelope
+	UnreadCount  int
+}
+
 // Channel is a dap channel mirrored by the relay.
 type Channel struct {
 	ID            string
@@ -92,6 +102,10 @@ type Envelope struct {
 	Payload    string
 	Mentions   []string
 	CreatedAt  time.Time
+	// Seq is the store's monotonic position inside the channel
+	// (relay-internal: read cursors and unread counts order by it; never
+	// part of any wire response).
+	Seq int64
 }
 
 // Session is a browser session token issued by join (memory only, E7).

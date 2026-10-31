@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS agent_owners (
   network_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS channel_reads (
+  user_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  seq BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, channel_id)
+);
 `
 
 // pgAlterStatements are idempotent additive migrations (IF NOT EXISTS).

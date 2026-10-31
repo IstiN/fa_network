@@ -22,7 +22,12 @@ type MemStore struct {
 	envSeq     int
 	envs       map[string][]model.Envelope // channelID -> insertion order
 	envIDs     map[string]map[string]bool  // channelID -> seen ids
-	wakeups    map[string]*model.WakeupRegistration
+	// chanSeq is the per-channel monotonic counter stamped on Envelope.Seq
+	// (read cursors order by it; deletion never renumbers).
+	chanSeq map[string]int64
+	// reads is userID -> channelID -> read cursor (envelope Seq).
+	reads   map[string]map[string]int64
+	wakeups map[string]*model.WakeupRegistration
 	dispatches map[string][]model.WakeupDispatch
 	activity   map[string]time.Time       // networkID -> last session activity
 	dropped    map[string]map[string]bool // networkID -> dropped agentIDs
@@ -38,6 +43,8 @@ func NewMemStore() *MemStore {
 		sessions:   map[string]*model.Session{},
 		envs:       map[string][]model.Envelope{},
 		envIDs:     map[string]map[string]bool{},
+		chanSeq:    map[string]int64{},
+		reads:      map[string]map[string]int64{},
 		wakeups:    map[string]*model.WakeupRegistration{},
 		dispatches: map[string][]model.WakeupDispatch{},
 		activity:   map[string]time.Time{},
