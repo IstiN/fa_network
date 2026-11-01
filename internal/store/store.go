@@ -154,6 +154,10 @@ type AgentOwnership interface {
 	// AgentOwner returns the owning networkID (ErrNotFound = unowned,
 	// e.g. agents enrolled directly on the hub or before this registry).
 	AgentOwner(ctx context.Context, agentName string) (string, error)
+	// NetworkAgentNames returns the agent names this network enrolled —
+	// the roster/presence projection set (review #16: hub agents are
+	// visible only inside the network that owns them).
+	NetworkAgentNames(ctx context.Context, networkID string) ([]string, error)
 }
 
 // Store composes every persistence facet. One handle per process.

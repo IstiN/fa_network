@@ -78,3 +78,27 @@ func (p *PGStore) AgentOwner(ctx context.Context, agentName string) (string, err
 	}
 	return owner, nil
 }
+
+// NetworkAgentNames implements AgentOwnership.
+func (p *PGStore) NetworkAgentNames(ctx context.Context, networkID string) ([]string, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT agent_name FROM agent_owners WHERE network_id = $1 ORDER BY agent_name`, networkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAgentNames(rows)
+}
+
+// scanAgentNames drains a single-column string result set.
+func scanAgentNames(rows *sql.Rows) ([]string, error) {
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}

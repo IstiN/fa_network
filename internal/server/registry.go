@@ -69,48 +69,78 @@ func (c *wsConn) silentFor(now time.Time, d time.Duration) bool {
 	return now.Sub(c.lastPong) > d
 }
 
-// SessionRegistry tracks live browser sockets by session token.
+// SessionRegistry tracks live browser sockets by session token. One
+// session token may ride SEVERAL concurrent sockets (Chrome + Safari on
+// the same account, reconnect overlap): the registry keys a token to a
+// SET of connections, and removal is identity-safe (a closing old socket
+// can never unregister its newer replacement).
 type SessionRegistry struct {
 	mu      sync.Mutex
-	byToken map[string]*wsConn
+	byToken map[string]map[*wsConn]struct{}
 }
 
 // NewSessionRegistry builds the registry.
 func NewSessionRegistry() *SessionRegistry {
-	return &SessionRegistry{byToken: map[string]*wsConn{}}
+	return &SessionRegistry{byToken: map[string]map[*wsConn]struct{}{}}
 }
 
 // Add registers a live socket.
 func (r *SessionRegistry) Add(c *wsConn) {
 	r.mu.Lock()
-	r.byToken[c.session.Token] = c
+	set, ok := r.byToken[c.session.Token]
+	if !ok {
+		set = map[*wsConn]struct{}{}
+		r.byToken[c.session.Token] = set
+	}
+	set[c] = struct{}{}
 	r.mu.Unlock()
 }
 
-// Remove unregisters a socket (idempotent).
-func (r *SessionRegistry) Remove(token string) {
+// Remove unregisters exactly this socket (idempotent, identity-safe:
+// other sockets of the same token stay registered).
+func (r *SessionRegistry) Remove(c *wsConn) {
 	r.mu.Lock()
-	delete(r.byToken, token)
+	if set, ok := r.byToken[c.session.Token]; ok {
+		delete(set, c)
+		if len(set) == 0 {
+			delete(r.byToken, c.session.Token)
+		}
+	}
 	r.mu.Unlock()
 }
 
-// Get returns the socket for a session token.
+// collect returns every live socket matching the filter (a snapshot —
+// broadcasting never holds the lock).
+func (r *SessionRegistry) collect(match func(*wsConn) bool) []*wsConn {
+	r.mu.Lock()
+	targets := []*wsConn{}
+	for _, set := range r.byToken {
+		for c := range set {
+			if match(c) {
+				targets = append(targets, c)
+			}
+		}
+	}
+	r.mu.Unlock()
+	return targets
+}
+
+// Get returns one socket for a session token (any of them — diagnostics
+// only; delivery paths never assume a single socket).
 func (r *SessionRegistry) Get(token string) *wsConn {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.byToken[token]
+	for c := range r.byToken[token] {
+		return c
+	}
+	return nil
 }
 
 // MemberLive reports whether any socket of a member is connected.
 func (r *SessionRegistry) MemberLive(networkID, memberID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, c := range r.byToken {
-		if c.session.NetworkID == networkID && c.session.MemberID == memberID {
-			return true
-		}
-	}
-	return false
+	return len(r.collect(func(c *wsConn) bool {
+		return c.session.NetworkID == networkID && c.session.MemberID == memberID
+	})) > 0
 }
 
 // Broadcast delivers one event frame to every live socket.
@@ -121,14 +151,9 @@ func (r *SessionRegistry) Broadcast(payload any) {
 // BroadcastTo delivers one event frame to the sockets of one network
 // (empty networkID = all sockets).
 func (r *SessionRegistry) BroadcastTo(networkID string, payload any) {
-	r.mu.Lock()
-	targets := []*wsConn{}
-	for _, c := range r.byToken {
-		if networkID == "" || c.session.NetworkID == networkID {
-			targets = append(targets, c)
-		}
-	}
-	r.mu.Unlock()
+	targets := r.collect(func(c *wsConn) bool {
+		return networkID == "" || c.session.NetworkID == networkID
+	})
 	frame := wsFrame{Type: frameTypeOf(payload), Payload: payload}
 	for _, c := range targets {
 		deliver(c, frame)
@@ -138,14 +163,9 @@ func (r *SessionRegistry) BroadcastTo(networkID string, payload any) {
 // NotifyManagers delivers wakeup.dispatched to owner/admin sessions only
 // (observability per the spec).
 func (r *SessionRegistry) NotifyManagers(networkID string, payload any) {
-	r.mu.Lock()
-	targets := []*wsConn{}
-	for _, c := range r.byToken {
-		if c.session.NetworkID == networkID && (c.class == model.ClassOwner || c.class == model.ClassAdmin) {
-			targets = append(targets, c)
-		}
-	}
-	r.mu.Unlock()
+	targets := r.collect(func(c *wsConn) bool {
+		return c.session.NetworkID == networkID && (c.class == model.ClassOwner || c.class == model.ClassAdmin)
+	})
 	frame := wsFrame{Type: frameTypeOf(payload), Payload: payload}
 	for _, c := range targets {
 		deliver(c, frame)
@@ -155,14 +175,9 @@ func (r *SessionRegistry) NotifyManagers(networkID string, payload any) {
 // FanoutEnvelope pushes one envelope to every socket subscribed to its
 // channel within the given network.
 func (r *SessionRegistry) FanoutEnvelope(networkID string, env model.EnvelopeWire) {
-	r.mu.Lock()
-	targets := []*wsConn{}
-	for _, c := range r.byToken {
-		if c.session.NetworkID == networkID && c.subscribed(env.ChannelID) {
-			targets = append(targets, c)
-		}
-	}
-	r.mu.Unlock()
+	targets := r.collect(func(c *wsConn) bool {
+		return c.session.NetworkID == networkID && c.subscribed(env.ChannelID)
+	})
 	frame := wsFrame{Type: "envelope", Payload: env}
 	for _, c := range targets {
 		deliver(c, frame)
@@ -180,32 +195,21 @@ func (r *SessionRegistry) SnapshotFor(networkID string, members []*model.Member)
 
 // KickMember disconnects every socket of one member (agent/guest kick).
 // Their sessions are already deleted store-side; the next read fails and
-// the per-connection cleanup runs.
+// the per-connection cleanup (including registry removal) runs.
 func (r *SessionRegistry) KickMember(networkID, memberID string) {
-	r.mu.Lock()
-	targets := []*wsConn{}
-	for token, c := range r.byToken {
-		if c.session.NetworkID == networkID && c.session.MemberID == memberID {
-			targets = append(targets, c)
-			delete(r.byToken, token)
-		}
-	}
-	r.mu.Unlock()
-	for _, c := range targets {
+	for _, c := range r.collect(func(c *wsConn) bool {
+		return c.session.NetworkID == networkID && c.session.MemberID == memberID
+	}) {
 		c.shutdown()
 	}
 }
 
 // ActiveNetworks lists networks with at least one connected socket.
 func (r *SessionRegistry) ActiveNetworks() []string {
-	r.mu.Lock()
 	set := map[string]bool{}
-	for _, c := range r.byToken {
-		if c.session.NetworkID != "" {
-			set[c.session.NetworkID] = true
-		}
+	for _, c := range r.collect(func(c *wsConn) bool { return c.session.NetworkID != "" }) {
+		set[c.session.NetworkID] = true
 	}
-	r.mu.Unlock()
 	ids := make([]string, 0, len(set))
 	for id := range set {
 		ids = append(ids, id)

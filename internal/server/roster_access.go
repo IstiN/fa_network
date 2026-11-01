@@ -74,7 +74,7 @@ func (s *Server) broadcastRosterSnapshot(ctx context.Context, networkID string) 
 	if err != nil {
 		return
 	}
-	members = append(members, s.relay.hubAgentMembers(networkID, members)...)
+	members = append(members, s.relay.hubAgentMembers(ctx, networkID, members)...)
 	s.relay.decorateAccess(ctx, members)
 	s.sessions.BroadcastTo(networkID, s.sessions.SnapshotFor(networkID, members).Payload)
 }

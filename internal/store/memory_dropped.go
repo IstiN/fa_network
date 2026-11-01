@@ -56,3 +56,17 @@ func (m *MemStore) AgentOwner(_ context.Context, agentName string) (string, erro
 	}
 	return owner, nil
 }
+
+// NetworkAgentNames implements AgentOwnership.
+func (m *MemStore) NetworkAgentNames(_ context.Context, networkID string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	names := []string{}
+	for name, owner := range m.owners {
+		if owner == networkID {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}

@@ -286,9 +286,10 @@ func (r *Relay) hubAgentsWires(ctx context.Context, networkID string, existing [
 	for _, w := range existing {
 		seen[w.AgentID] = true
 	}
+	owned := r.ownedAgentNames(ctx, networkID) // review #16: only this network's enrollments
 	wires := []model.AgentWire{}
 	for _, info := range r.hubPresence() {
-		if seen[info.AgentID] || r.isDropped(networkID, info.AgentID) {
+		if seen[info.AgentID] || !owned[info.Name] || r.isDropped(networkID, info.AgentID) {
 			continue
 		}
 		var lastSeen *time.Time

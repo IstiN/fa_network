@@ -8,9 +8,10 @@ import (
 )
 
 // updateHubAgent refreshes the agent presence cache and notifies watchers
-// per network. Agents dropped in a network get no presence.changed there
-// (clients must not re-insert them); the cache itself stays global so
-// other networks keep seeing the agent.
+// per network. Review #16: only the network that ENROLLED the agent name
+// (agent_owners) receives its presence.changed; agents dropped in that
+// network get no event either (clients must not re-insert them). The
+// cache itself stays global for wakeup lookups.
 func (r *Relay) updateHubAgent(ctx context.Context, ev hub.Event) {
 	r.mu.Lock()
 	info, ok := r.hubAgents[ev.AgentID]
@@ -24,7 +25,7 @@ func (r *Relay) updateHubAgent(ctx context.Context, ev hub.Event) {
 	r.hubAgents[ev.AgentID] = info
 	r.mu.Unlock()
 	for _, networkID := range r.sessions.ActiveNetworks() {
-		if r.isDropped(networkID, ev.AgentID) {
+		if !r.ownedAgentNames(ctx, networkID)[info.Name] || r.isDropped(networkID, ev.AgentID) {
 			continue
 		}
 		member := &model.Member{ID: ev.AgentID, NetworkID: networkID, Class: model.ClassAgent}

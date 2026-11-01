@@ -70,7 +70,7 @@ func (s *Server) handleWSConn(ctx context.Context, conn *websocket.Conn, sess *m
 	ws.closeConn = func() { _ = conn.CloseNow() }
 	s.sessions.Add(ws)
 	defer func() {
-		s.sessions.Remove(sess.Token)
+		s.sessions.Remove(ws)
 		s.staleCheck(context.Background(), member)
 		conn.CloseNow()
 	}()
@@ -79,7 +79,7 @@ func (s *Server) handleWSConn(ctx context.Context, conn *websocket.Conn, sess *m
 	// Greet: roster snapshot (members + DAP hub agents, issue #4) +
 	// offline state when the hub is down.
 	members, _ := s.st.Members(ctx, sess.NetworkID)
-	members = append(members, s.relay.hubAgentMembers(sess.NetworkID, members)...)
+	members = append(members, s.relay.hubAgentMembers(ctx, sess.NetworkID, members)...)
 	s.relay.decorateAccess(ctx, members)
 	ws.send <- s.sessions.SnapshotFor(sess.NetworkID, members)
 	if !s.hub.Online() {

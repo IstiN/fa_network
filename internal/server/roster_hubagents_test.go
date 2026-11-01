@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -26,7 +27,10 @@ func waitForCondition(t *testing.T, what string, cond func() bool) {
 // displayName/class so the app can count and render them.
 func TestHubAgentsInRosterSnapshot(t *testing.T) {
 	env := newTestEnv(t)
-	_, _, guestSess, _, _ := setupNetwork(t, env)
+	_, _, guestSess, _, networkID := setupNetwork(t, env)
+	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "cli-agent"); err != nil {
+		t.Fatalf("claim owner: %v", err)
+	}
 	env.hub.EmitPresence(hub.PresenceInfo{AgentID: "a1", Name: "cli-agent", Online: true})
 	waitForCondition(t, "hub agent cached", func() bool {
 		return env.srv.relay.hubAgentName("a1") == "cli-agent"
@@ -83,18 +87,27 @@ func TestHubAgentMembersProjection(t *testing.T) {
 	r.hubAgents["a-dup"] = hub.PresenceInfo{AgentID: "a-dup", Name: "member", Online: true}
 	r.hubAgents["a-noname"] = hub.PresenceInfo{AgentID: "a-noname", Online: false}
 	r.hubAgents["a-online"] = hub.PresenceInfo{AgentID: "a-online", Name: "zeta", Online: true}
+	// n1 enrolled "member" and "zeta"; a-noname (no name) is unowned and
+	// must stay hidden (review #16: ownership-scoped projection).
+	if err := env.st.ClaimAgentOwner(context.Background(), "n1", "member"); err != nil {
+		t.Fatalf("claim member: %v", err)
+	}
+	if err := env.st.ClaimAgentOwner(context.Background(), "n1", "zeta"); err != nil {
+		t.Fatalf("claim zeta: %v", err)
+	}
 	existing := []*model.Member{{ID: "a-dup", NetworkID: "n1", Class: model.ClassGuest}}
-	out := r.hubAgentMembers("n1", existing)
-	if len(out) != 2 {
-		t.Fatalf("dedup failed: %+v", out)
+	out := r.hubAgentMembers(context.Background(), "n1", existing)
+	if len(out) != 1 {
+		t.Fatalf("dedup/ownership filter failed: %+v", out)
 	}
-	if out[0].ID != "a-noname" || out[1].ID != "a-online" {
-		t.Fatalf("order not deterministic: %s, %s", out[0].ID, out[1].ID)
+	if out[0].ID != "a-online" || out[0].DisplayName != "zeta" {
+		t.Fatalf("projection = %+v", out[0])
 	}
-	if out[0].DisplayName != "a-noname" || out[0].Presence != model.PresenceOffline {
-		t.Fatalf("name fallback/presence = %+v", out[0])
+	if out[0].NetworkID != "n1" || out[0].Class != model.ClassAgent || out[0].Presence != model.PresenceLive {
+		t.Fatalf("projection = %+v", out[0])
 	}
-	if out[1].NetworkID != "n1" || out[1].Class != model.ClassAgent || out[1].Presence != model.PresenceLive {
-		t.Fatalf("projection = %+v", out[1])
+	// Another network sees nothing: agents enrolled by n1 only.
+	if got := r.hubAgentMembers(context.Background(), "n2", nil); len(got) != 0 {
+		t.Fatalf("cross-network leak: %+v", got)
 	}
 }

@@ -860,9 +860,9 @@ paths:
 
         | type | payload | notes |
         |---|---|---|
-        | `roster.snapshot` | `{members: Member[]}` | on connect and pushed on roster/ACL changes; includes pure-DAP hub agents as `class=agent` entries (issue #4); each member carries additive `access` |
+        | `roster.snapshot` | `{members: Member[]}` | on connect and pushed on roster/ACL changes; includes pure-DAP hub agents as `class=agent` entries (issue #4) — scoped to agents THIS network enrolled (review #16, no cross-tenant visibility); each member carries additive `access` |
         | `envelope` | `Envelope` | relayed channel ciphertext |
-        | `presence.changed` | `{memberId, presence, displayName?, class?, access?}` | `live`/`busy`/`offline`; `displayName`/`class` set for DAP hub agents (issue #4), omitted for store members; additive `access` = scope at event time |
+        | `presence.changed` | `{memberId, presence, displayName?, class?, access?}` | `live`/`busy`/`offline`; `displayName`/`class` set for DAP hub agents (issue #4 — delivered only to the enrolling network, review #16), omitted for store members; additive `access` = scope at event time |
         | `network.offline` | `{reason}` | hub unreachable — queueing starts; broadcast on every hub disconnect AND sent on the WS greeting whenever the hub is currently down |
         | `network.drain` | `{count}` | hub reconnected; `{count}` queued envelopes flushed; broadcast once after every successful hub (re)connect — NOT replayed to sockets that connect later |
 
@@ -914,7 +914,10 @@ paths:
     get:
       tags: [agents]
       summary: Agent roster with presence (member)
-      description: Presence drives wake-up decisions (AC-B6).
+      description: |
+        Presence drives wake-up decisions (AC-B6). Hub agents appear here
+        only when enrolled by THIS network (agent_owners, review #16) —
+        other networks' agents are never listed.
       parameters:
         - $ref: '#/components/parameters/NetworkId'
       responses:

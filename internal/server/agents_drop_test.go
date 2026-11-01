@@ -11,9 +11,13 @@ import (
 	"github.com/IstiN/fa_network/internal/hub"
 )
 
-// seedDropAgent puts a hub agent into the roster of a test network.
-func seedDropAgent(t *testing.T, env *testEnv) {
+// seedDropAgent puts a hub agent into the roster of a test network,
+// enrolled by that network (review #16: projection is ownership-scoped).
+func seedDropAgent(t *testing.T, env *testEnv, networkID string) {
 	t.Helper()
+	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "public-agent"); err != nil {
+		t.Fatalf("claim owner: %v", err)
+	}
 	env.hub.SetPresence([]hub.PresenceInfo{{AgentID: "a1", Name: "public-agent", Online: true}})
 	env.hub.SetOnline(false)
 	env.hub.SetOnline(true)
@@ -26,7 +30,7 @@ func seedDropAgent(t *testing.T, env *testEnv) {
 func TestDropAgentPerNetwork(t *testing.T) {
 	env := newTestEnv(t)
 	_, ownerSess, guestSess, _, networkID := setupNetwork(t, env)
-	seedDropAgent(t, env)
+	seedDropAgent(t, env, networkID)
 
 	browser := dialWS(t, env, guestSess)
 	if _, ok := snapshotRoster(t, browser.next("roster.snapshot"))["a1"]; !ok {
@@ -38,10 +42,8 @@ func TestDropAgentPerNetwork(t *testing.T) {
 	if rec := env.do("DELETE", "/api/networks/"+networkID+"/agents/a1", nil, ownerSess); rec.Code != http.StatusNoContent {
 		t.Fatalf("owner drop status = %d body %s", rec.Code, rec.Body.String())
 	}
-	// Unowned agent (not enrolled by this network): no global eviction.
-	if got := env.hub.Evicted(); len(got) != 0 {
-		t.Fatalf("unowned agent must not be hub-evicted: %v", got)
-	}
+	// The agent is enrolled by this network, so the drop hub-evicts it
+	// too (ownership-gated eviction; see TestDropOwnedAgentEvictsHub).
 	if _, ok := snapshotRoster(t, browser.next("roster.snapshot"))["a1"]; ok {
 		t.Fatal("a1 must be gone from the post-drop snapshot")
 	}
@@ -58,21 +60,24 @@ func TestDropAgentPerNetwork(t *testing.T) {
 	if !env.srv.relay.seedHubPresenceOnce(context.Background()) {
 		t.Fatal("reseed failed")
 	}
-	if got := env.srv.relay.hubAgentMembers(networkID, nil); len(got) != 0 {
+	if got := env.srv.relay.hubAgentMembers(context.Background(), networkID, nil); len(got) != 0 {
 		t.Fatalf("dropped agent resurrected in network roster: %+v", got)
 	}
 	if got := env.srv.relay.hubPresence(); len(got) != 1 {
 		t.Fatalf("global presence cache should keep the agent for other networks: %+v", got)
 	}
-	// Idempotent re-drop: 204, still no eviction.
+	// Idempotent re-drop: 204, no NEW eviction beyond the first one.
 	if rec := env.do("DELETE", "/api/networks/"+networkID+"/agents/a1", nil, ownerSess); rec.Code != http.StatusNoContent {
 		t.Fatalf("second drop status = %d", rec.Code)
 	}
-	if got := env.hub.Evicted(); len(got) != 0 {
+	if got := env.hub.Evicted(); len(got) != 1 {
 		t.Fatalf("re-drop caused side effects: %v", got)
 	}
 	// Presence flaps of the dropped agent produce no presence.changed in
-	// this network; a different agent's presence still flows.
+	// this network; a different OWNED agent's presence still flows.
+	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "other-agent"); err != nil {
+		t.Fatalf("claim other-agent: %v", err)
+	}
 	env.hub.EmitPresence(hub.PresenceInfo{AgentID: "a1", Name: "public-agent", Online: false})
 	env.hub.EmitPresence(hub.PresenceInfo{AgentID: "a2", Name: "other-agent", Online: true})
 	frame := browser.next("presence.changed")
@@ -82,25 +87,23 @@ func TestDropAgentPerNetwork(t *testing.T) {
 	}
 }
 
-// A manager of network B must not hide agents in network A's roster.
+// Review #16: an agent enrolled by network A is visible ONLY in A —
+// network B never sees it (cross-tenant isolation), so a drop in B
+// cannot touch A's roster either.
 func TestDropAgentDoesNotAffectOtherNetworks(t *testing.T) {
 	env := newTestEnv(t)
 	ownerJWT := env.authedToken("owner1", "Owner One")
 	netA := env.createNetwork(t, ownerJWT, "net-a", "secret123")
 	sessA, _ := env.join(t, netA, "secret123", "", ownerJWT)
 	netB := env.createNetwork(t, ownerJWT, "net-b", "secret123")
-	seedDropAgent(t, env)
+	seedDropAgent(t, env, netA)
+	if got := env.srv.relay.hubAgentMembers(context.Background(), netB, nil); len(got) != 0 {
+		t.Fatalf("a1 must be invisible in B (not enrolled there): %+v", got)
+	}
 	if rec := env.do("DELETE", "/api/networks/"+netB+"/agents/a1", nil, sessA); rec.Code != http.StatusForbidden {
 		t.Fatalf("foreign session in network B = %d, want 403", rec.Code)
 	}
-	rec := env.do("DELETE", "/api/networks/"+netB+"/agents/a1", nil, ownerJWT)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("drop in own network B = %d %s", rec.Code, rec.Body.String())
-	}
-	if got := env.srv.relay.hubAgentMembers(netB, nil); len(got) != 0 {
-		t.Fatalf("a1 must be gone from B: %+v", got)
-	}
-	if got := env.srv.relay.hubAgentMembers(netA, nil); len(got) != 1 {
+	if got := env.srv.relay.hubAgentMembers(context.Background(), netA, nil); len(got) != 1 {
 		t.Fatalf("a1 must stay in A: %+v", got)
 	}
 }
@@ -131,7 +134,7 @@ func TestDropOwnedAgentEvictsHub(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("enroll: %d %s", rec.Code, rec.Body.String())
 	}
-	seedDropAgent(t, env)
+	seedDropAgent(t, env, networkID)
 	if rec := env.do("DELETE", "/api/networks/"+networkID+"/agents/a1", nil, ownerSess); rec.Code != http.StatusNoContent {
 		t.Fatalf("drop owned: %d %s", rec.Code, rec.Body.String())
 	}
@@ -144,7 +147,7 @@ func TestDropOwnedAgentEvictsHub(t *testing.T) {
 func TestDropAgentPersistsAcrossRestart(t *testing.T) {
 	env := newTestEnv(t)
 	_, ownerSess, _, _, networkID := setupNetwork(t, env)
-	seedDropAgent(t, env)
+	seedDropAgent(t, env, networkID)
 	if rec := env.do("DELETE", "/api/networks/"+networkID+"/agents/a1", nil, ownerSess); rec.Code != http.StatusNoContent {
 		t.Fatalf("drop: %d", rec.Code)
 	}
@@ -153,7 +156,7 @@ func TestDropAgentPersistsAcrossRestart(t *testing.T) {
 	if !env.srv.relay.isDropped(networkID, "a1") {
 		t.Fatal("in-memory drop missing")
 	}
-	if got := restarted.hubAgentMembers(networkID, nil); len(got) != 0 {
+	if got := restarted.hubAgentMembers(context.Background(), networkID, nil); len(got) != 0 {
 		t.Fatalf("restart resurrected dropped agent: %+v", got)
 	}
 }
