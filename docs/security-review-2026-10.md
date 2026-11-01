@@ -20,7 +20,7 @@ PRs: #11 (WS shutdown), #12 (tenant isolation), #13 (request hardening).
 | 13 | CORS allowlist not applied to WS upgrade | Medium | **Fixed** (#13): `AcceptOptions.OriginPatterns = corsOrigins` — also fixes legitimate cross-origin browser upgrades. |
 | 14 | Deploy hardening: admin token in env, mutable action tags, unpinned CI tool | Medium | **Fixed** (#13 pinned actions; 2026-11-01 secrets): `FA_NETWORK_DAP_ADMIN_TOKEN` moved to Secret Manager (`fa-network-dap-admin-token:latest`, Cloud Run reads via `--set-secrets`, deploy.yml updated), token **rotated** — old value revoked everywhere (hub VM `HUB_ADMIN_TOKEN` replaced, backup `/etc/dap-hub.env.bak-token-20261101`), GitHub Actions secret deleted. |
 | 15 | Dropped agent resurrected by in-flight presence | Low | **Fixed** (#12): per-network tombstone re-checked after store reads, before every broadcast. |
-| 16 | Global hub-agent roster + per-member ACL metadata visible to guests | Low | **Open / product decision.** Hub agents are hub-global by design (issue #4); per-network association exists now for enrolled agents (`agent_owners`) and could drive filtering; viewer-scoped `Access` projection needs a contract change. |
+| 16 | Global hub-agent roster + per-member ACL metadata visible to guests | Low | **Fixed (2026-11-01, decision taken):** hub agents project into roster, `/agents`, inbox and `presence.changed` ONLY for the network that enrolled them (`agent_owners`, new `store.NetworkAgentNames`); fail-closed on store errors; unowned agents visible nowhere. openapi contract updated. |
 
 ## Extra fix outside the numbered list
 
@@ -44,3 +44,16 @@ fa_network never holds channel keys (law #1); agents that keygen their
 own pair for an unknown channel produce messages clients cannot decrypt.
 Enrollment docs already carry this step; automating the invite belongs
 to the client/provisioning side.
+
+## 2026-11-01 appendix — same-connection fixes beyond the numbered list
+
+- **Multi-socket same-token fanout loss** (production incident root
+  cause, functional not security): `SessionRegistry` keyed a token to a
+  single connection — a second socket silently replaced the first in
+  fanout maps, and an older closing socket unregistered its replacement.
+  Now tokens map to connection SETS with identity-safe removal; all
+  fanout paths deliver to every socket. Regressions in
+  registry_multisocket_test.go.
+- All 16 findings are now closed or consciously deferred (session
+  absolute/idle expiry remains a documented follow-up pending client
+  reconnect UX).
