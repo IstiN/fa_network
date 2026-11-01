@@ -47,6 +47,7 @@ type Server struct {
 	failures    *FailureTracker
 	deliveries  *deliveryCache
 	triggers    *triggers.Service
+	tickets     *ticketStore
 }
 
 // New builds the server and starts its relay loop.
@@ -72,6 +73,7 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		failures:   NewFailureTracker(),
 		deliveries: newDeliveryCache(),
 		triggers:   cfg.Triggers,
+		tickets:    newTicketStore(cfg.Now),
 	}
 	s.relay = NewRelay(st, hubClient, s.sessions, dispatcher, cfg.Now)
 	if len(cfg.CORSOrigins) == 0 {
@@ -101,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /skill.md", serveSiteFile("SKILL.md", "text/markdown"))
 	mux.HandleFunc("GET /llms.txt", serveSiteFile("llms.txt", "text/plain"))
 	mux.HandleFunc("GET /healthz", Healthz)
+	mux.HandleFunc("POST /api/ws-ticket", s.issueWSTicket)
 	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
 	mux.HandleFunc("GET /docs", serveDocs)

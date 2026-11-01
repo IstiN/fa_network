@@ -803,15 +803,54 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/ws-ticket:
+    post:
+      tags: [realtime]
+      summary: Mint a single-use WebSocket ticket (browser WS auth)
+      description: |
+        Browser WebSocket clients cannot set Authorization headers, so the
+        session bearer used to ride in `/ws?token=` and land in ingress
+        request logs (security review #7). Exchange
+        `Authorization: Bearer <sessionToken>` for a one-time ticket and
+        connect with `/ws?ticket=…` instead — the long-lived session token
+        never appears in a URL. Ticket TTL 60s, strictly single use
+        (consumed even when the upgrade fails), minting rate-limited to
+        30/min per member. Tickets are held in service memory, which
+        matches the single-instance deployment; scaling past one instance
+        requires a shared ticket store first.
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          description: Ticket minted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket, expiresIn]
+                properties:
+                  ticket:
+                    type: string
+                    description: Opaque one-time ticket for `/ws?ticket=`.
+                  expiresIn:
+                    type: integer
+                    example: 60
+                    description: Ticket lifetime in seconds.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
   /ws:
     get:
       tags: [realtime]
       summary: Realtime session (WebSocket upgrade)
       description: |
-        Auth: `Authorization: Bearer <sessionToken>` (from join), or
-        `?token=<sessionToken>` in the URL — browser WebSocket clients cannot
-        set request headers, so the query form is the supported path for
-        web embeds. One socket
+        Auth (in order): `Authorization: Bearer <sessionToken>`; a
+        single-use `?ticket=<ticket>` minted by `POST /api/ws-ticket`
+        (recommended for browser clients — review #7); legacy
+        `?token=<sessionToken>` (deprecated, kept until clients migrate).
+        One socket
         per session; heartbeat every 30s (ghost presence cleanup beyond two
         missed beats — E7). While the dap hub is unreachable the socket
         reports `network.offline` and queues outbound envelopes; on reconnect
@@ -848,8 +887,23 @@ paths:
       parameters:
         - name: Authorization
           in: header
-          required: true
+          required: false
           schema: { type: string }
+        - name: ticket
+          in: query
+          required: false
+          schema: { type: string }
+          description: >
+            Single-use 60s ticket from POST /api/ws-ticket (preferred for
+            browsers).
+        - name: token
+          in: query
+          required: false
+          deprecated: true
+          schema: { type: string }
+          description: >
+            Legacy session token in the URL — deprecated (security review
+            #7); use ?ticket=.
       responses:
         '101':
           description: Switching Protocols (WebSocket upgrade).

@@ -18,13 +18,25 @@ const (
 )
 
 // serveWS implements GET /ws — the realtime session (WebSocket upgrade).
-// Auth: Bearer <sessionToken> from join. One socket per session.
+// Auth: Bearer <sessionToken> from join, or a single-use ?ticket= minted
+// by POST /api/ws-ticket (browser clients; review #7), or the legacy
+// ?token= fallback. One socket per session.
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
-	// Browser WebSocket cannot set Authorization; a session token may ride
-	// in ?token= (server logs never carry it further — the wire is the
-	// upgrade request only).
 	token := bearerToken(r)
 	if token == "" {
+		// Single-use ticket first: consume happens before any further
+		// validation, so a redeemed ticket can never be replayed even
+		// if the session underneath fails.
+		if t := r.URL.Query().Get("ticket"); t != "" {
+			if redeemed, ok := s.tickets.consume(t); ok {
+				token = redeemed
+			}
+		}
+	}
+	if token == "" {
+		// Legacy fallback: browsers cannot set Authorization. The
+		// bearer rides in the URL only until clients migrate to
+		// tickets (review #7); server logs never carry it further.
 		token = r.URL.Query().Get("token")
 	}
 	if token == "" {
