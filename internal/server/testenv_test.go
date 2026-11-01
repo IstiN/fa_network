@@ -32,7 +32,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	st := store.NewMemStore()
 	fakeHub := hub.NewFakeClient("r_test")
 	provider := auth.NewMockProvider([]byte("0123456789abcdef0123456789abcdef"))
-	dispatcher := wakeup.NewDispatcher(wakeup.Options{Store: st, Secret: []byte("sec")})
+	// Plain HTTP client: server tests assert mention→wakeup semantics
+	// against loopback httptest servers; the dispatcher's default client
+	// enforces the egress policy (egress_test.go) and would block them.
+	dispatcher := wakeup.NewDispatcher(wakeup.Options{Store: st, Secret: []byte("sec"), HTTP: &http.Client{}})
 	srv := New(st, provider, fakeHub, dispatcher, Config{
 		RetentionInactivityDays: 30,
 		RetentionSweepInterval:  time.Hour,

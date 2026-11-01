@@ -1101,7 +1101,10 @@ paths:
         agent and its presence is offline; dispatch is debounced per agent
         (one call per window, default 300s, min 30s); presence `online` ⇒
         zero calls (`skipped_online` in the log). Webhook secret is set
-        once, rotatable, never returned afterwards.
+        once, rotatable, never returned afterwards. Egress policy: the
+        service dials public unicast addresses only (loopback, private,
+        link-local/metadata, multicast refused at connect time — DNS
+        rebinding covered) and never follows redirects.
       security:
         - authJwt: []
       parameters:

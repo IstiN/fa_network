@@ -58,7 +58,7 @@ type Options struct {
 func NewDispatcher(opts Options) *Dispatcher {
 	httpClient := opts.HTTP
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = newGuardedClient()
 	}
 	now := opts.Now
 	if now == nil {

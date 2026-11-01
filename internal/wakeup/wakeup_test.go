@@ -35,7 +35,10 @@ func TestDispatchDebouncedAndIdentityOnly(t *testing.T) {
 	if err := st.UpsertWakeup(ctx, reg); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	d := NewDispatcher(Options{Store: st, Secret: []byte("webhook-secret")})
+	// Unguarded client: this test exercises debounce/payload semantics
+	// against a loopback httptest server; the egress policy has its own
+	// tests (egress_test.go) and must not fire here.
+	d := NewDispatcher(Options{Store: st, Secret: []byte("webhook-secret"), HTTP: &http.Client{}})
 
 	// Online target: zero calls, skipped_online log.
 	if err := d.Dispatch(ctx, "n1", "a1", model.PresenceLive); err != nil {
