@@ -49,6 +49,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		RetentionInactivityDays: 30,
 		RetentionSweepInterval:  time.Hour,
 	})
+	srv.passwords = newFastPasswords() // scrypt cost is not under test here
 	env := &testEnv{t: t, srv: srv, st: st, hub: fakeHub, auth: provider}
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
