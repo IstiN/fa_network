@@ -89,10 +89,15 @@ paths:
         '404':
           description: Not under the mock provider (production).
 
-  /healthz:
+  /api/healthz:
     get:
       tags: [health]
       summary: Liveness probe
+      description: |
+        Moved from /healthz: Google's frontend (GFE) intercepts the exact
+        path /healthz before the container on *.run.app and custom
+        domains, returning its own 404 — the route is unreachable in
+        production. /api/healthz passes through.
       security: []
       responses:
         '200':

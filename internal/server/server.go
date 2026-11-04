@@ -112,7 +112,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /SKILL.md", serveSiteFile("SKILL.md", "text/markdown"))
 	mux.HandleFunc("GET /skill.md", serveSiteFile("SKILL.md", "text/markdown"))
 	mux.HandleFunc("GET /llms.txt", serveSiteFile("llms.txt", "text/plain"))
-	mux.HandleFunc("GET /healthz", Healthz)
+	mux.HandleFunc("GET /api/healthz", Healthz) // GFE eats /healthz upstream
+	mux.HandleFunc("GET /healthz", Healthz)      // local dev convenience
 	mux.HandleFunc("POST /api/ws-ticket", s.issueWSTicket)
 	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
