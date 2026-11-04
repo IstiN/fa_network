@@ -28,9 +28,7 @@ func waitForCondition(t *testing.T, what string, cond func() bool) {
 func TestHubAgentsInRosterSnapshot(t *testing.T) {
 	env := newTestEnv(t)
 	_, _, guestSess, _, networkID := setupNetwork(t, env)
-	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "cli-agent"); err != nil {
-		t.Fatalf("claim owner: %v", err)
-	}
+	env.enrollAgent(networkID, "cli-agent")
 	env.hub.EmitPresence(hub.PresenceInfo{AgentID: "a1", Name: "cli-agent", Online: true})
 	waitForCondition(t, "hub agent cached", func() bool {
 		return env.srv.relay.hubAgentName("a1") == "cli-agent"
@@ -89,12 +87,8 @@ func TestHubAgentMembersProjection(t *testing.T) {
 	r.hubAgents["a-online"] = hub.PresenceInfo{AgentID: "a-online", Name: "zeta", Online: true}
 	// n1 enrolled "member" and "zeta"; a-noname (no name) is unowned and
 	// must stay hidden (review #16: ownership-scoped projection).
-	if err := env.st.ClaimAgentOwner(context.Background(), "n1", "member"); err != nil {
-		t.Fatalf("claim member: %v", err)
-	}
-	if err := env.st.ClaimAgentOwner(context.Background(), "n1", "zeta"); err != nil {
-		t.Fatalf("claim zeta: %v", err)
-	}
+	env.enrollAgent("n1", "member")
+	env.enrollAgent("n1", "zeta")
 	existing := []*model.Member{{ID: "a-dup", NetworkID: "n1", Class: model.ClassGuest}}
 	out := r.hubAgentMembers(context.Background(), "n1", existing)
 	if len(out) != 1 {

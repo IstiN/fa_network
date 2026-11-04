@@ -80,10 +80,42 @@ func (s *Server) resolveIdentity(w http.ResponseWriter, r *http.Request, network
 	return &identity{member: member, principal: principal}
 }
 
-// touchSession stamps activity (retention clock) best-effort.
+// touchSession stamps activity (retention clock) best-effort, throttled
+// to one persist per session per touchThrottle.
 func (s *Server) touchSession(ctx context.Context, sess *model.Session) {
+	if !s.shouldTouch(sess.Token) {
+		return
+	}
 	_ = s.st.TouchSession(ctx, sess.Token, s.cfg.Now())
 	_ = s.st.TouchActivity(ctx, sess.NetworkID, s.cfg.Now())
+}
+
+// shouldTouch reports whether this session's stamp is due, remembering
+// the decision. Stale entries are pruned opportunistically.
+func (s *Server) shouldTouch(token string) bool {
+	now := s.cfg.Now()
+	s.touchMu.Lock()
+	defer s.touchMu.Unlock()
+	if s.lastTouch == nil {
+		s.lastTouch = map[string]time.Time{}
+	}
+	if last, ok := s.lastTouch[token]; ok && now.Sub(last) < touchThrottle {
+		return false
+	}
+	if len(s.lastTouch) > 1024 {
+		pruneTouch(s.lastTouch, now)
+	}
+	s.lastTouch[token] = now
+	return true
+}
+
+// pruneTouch drops entries not touched for 24h (guest tokens churn).
+func pruneTouch(m map[string]time.Time, now time.Time) {
+	for k, at := range m {
+		if now.Sub(at) > 24*time.Hour {
+			delete(m, k)
+		}
+	}
 }
 
 // requireManager gates owner/admin-only routes: authed AND elevated class.

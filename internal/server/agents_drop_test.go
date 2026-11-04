@@ -15,9 +15,7 @@ import (
 // enrolled by that network (review #16: projection is ownership-scoped).
 func seedDropAgent(t *testing.T, env *testEnv, networkID string) {
 	t.Helper()
-	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "public-agent"); err != nil {
-		t.Fatalf("claim owner: %v", err)
-	}
+	env.enrollAgent(networkID, "public-agent")
 	env.hub.SetPresence([]hub.PresenceInfo{{AgentID: "a1", Name: "public-agent", Online: true}})
 	env.hub.SetOnline(false)
 	env.hub.SetOnline(true)
@@ -75,9 +73,7 @@ func TestDropAgentPerNetwork(t *testing.T) {
 	}
 	// Presence flaps of the dropped agent produce no presence.changed in
 	// this network; a different OWNED agent's presence still flows.
-	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "other-agent"); err != nil {
-		t.Fatalf("claim other-agent: %v", err)
-	}
+	env.enrollAgent(networkID, "other-agent")
 	env.hub.EmitPresence(hub.PresenceInfo{AgentID: "a1", Name: "public-agent", Online: false})
 	env.hub.EmitPresence(hub.PresenceInfo{AgentID: "a2", Name: "other-agent", Online: true})
 	frame := browser.next("presence.changed")

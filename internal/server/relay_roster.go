@@ -9,17 +9,36 @@ import (
 
 // ownedAgentNames returns the hub-agent-name set enrolled by this network
 // (agent_owners). Fail-closed: on store errors the set is empty — an
-// unknown ownership must hide, not leak (review #16).
+// unknown ownership must hide, not leak (review #16). Results are cached
+// for ownedCacheTTL (errors are never cached); enroll/drop invalidate
+// explicitly via InvalidateOwned.
 func (r *Relay) ownedAgentNames(ctx context.Context, networkID string) map[string]bool {
-	names, err := r.st.NetworkAgentNames(ctx, networkID)
-	owned := make(map[string]bool, len(names))
-	if err != nil {
-		return owned
+	r.ownedMu.Lock()
+	if e, ok := r.ownedCache[networkID]; ok && r.now().Sub(e.at) < ownedCacheTTL {
+		r.ownedMu.Unlock()
+		return e.names
 	}
+	r.ownedMu.Unlock()
+	names, err := r.st.NetworkAgentNames(ctx, networkID)
+	if err != nil {
+		return map[string]bool{} // fail-closed, uncached
+	}
+	owned := make(map[string]bool, len(names))
 	for _, n := range names {
 		owned[n] = true
 	}
+	r.ownedMu.Lock()
+	r.ownedCache[networkID] = ownedNames{names: owned, at: r.now()}
+	r.ownedMu.Unlock()
 	return owned
+}
+
+// InvalidateOwned drops the cached enrollment set for one network — call
+// after any agent_owners mutation (enroll, drop).
+func (r *Relay) InvalidateOwned(networkID string) {
+	r.ownedMu.Lock()
+	delete(r.ownedCache, networkID)
+	r.ownedMu.Unlock()
 }
 
 // hubAgentName resolves the enrolled display name of a hub agent from the

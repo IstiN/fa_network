@@ -27,6 +27,15 @@ type testEnv struct {
 	auth *auth.MockProvider
 }
 
+// enrollAgent claims hub-agent ownership the way the enroll handler does:
+// store row + relay cache invalidation.
+func (env *testEnv) enrollAgent(networkID, name string) {
+	if err := env.st.ClaimAgentOwner(context.Background(), networkID, name); err != nil {
+		env.t.Fatalf("claim %s: %v", name, err)
+	}
+	env.srv.relay.InvalidateOwned(networkID)
+}
+
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	st := store.NewMemStore()

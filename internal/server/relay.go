@@ -31,10 +31,26 @@ type Relay struct {
 	hubAgents map[string]hub.PresenceInfo  // agentID -> last known
 	dropped   map[string]map[string]bool   // networkID -> per-network roster exclusions
 	online    bool
+	// ownedMu guards ownedCache: enrollment sets per network with a short
+	// TTL — every hub presence flap filters through it, so the store must
+	// not see a query per event per network (CPU/DB hot path).
+	ownedMu    sync.Mutex
+	ownedCache map[string]ownedNames
 	// seedRetryDelays paces the background presence-reseed retries after a
 	// failed initial attempt (tests shrink it).
 	seedRetryDelays []time.Duration
 }
+
+// ownedNames is one network's cached enrollment set.
+type ownedNames struct {
+	names map[string]bool
+	at    time.Time
+}
+
+// ownedCacheTTL bounds enrollment-set staleness; explicit invalidation on
+// enroll/drop keeps correctness immediate, the TTL only re-syncs external
+// writes (psql, another instance).
+const ownedCacheTTL = 15 * time.Second
 
 // NewRelay builds the relay.
 func NewRelay(st store.Store, hubClient hub.Client, sessions *SessionRegistry, dispatcher *wakeup.Dispatcher, now func() time.Time) *Relay {
@@ -48,6 +64,7 @@ func NewRelay(st store.Store, hubClient hub.Client, sessions *SessionRegistry, d
 		sending:         map[string]bool{},
 		hubAgents:       map[string]hub.PresenceInfo{},
 		dropped:         map[string]map[string]bool{},
+		ownedCache:      map[string]ownedNames{},
 		online:          hubClient.Online(),
 		seedRetryDelays: []time.Duration{5 * time.Second, 15 * time.Second},
 	}

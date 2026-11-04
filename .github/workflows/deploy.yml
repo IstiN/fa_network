@@ -59,7 +59,7 @@ jobs:
             --region "${{ vars.GCP_REGION }}" \
             --port 8080 \
             --cpu 1 --memory 512Mi \
-            --min-instances 1 --max-instances 1 \
+            --min-instances 0 --max-instances 1 \
             --concurrency 100 \
             --add-cloudsql-instances ai-native-478811:us-central1:learn-ai-db \
             --allow-unauthenticated \

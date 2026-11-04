@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -95,9 +94,7 @@ func TestRosterAccessSnapshotAndACLPatch(t *testing.T) {
 		t.Fatalf("patch vip: %d %s", rec.Code, rec.Body.String())
 	}
 
-	if err := env.st.ClaimAgentOwner(context.Background(), networkID, "public-agent"); err != nil {
-		t.Fatalf("claim owner: %v", err)
-	}
+	env.enrollAgent(networkID, "public-agent")
 	env.hub.SetPresence([]hub.PresenceInfo{{AgentID: "a1", Name: "public-agent", Online: true}})
 	env.hub.SetOnline(false)
 	env.hub.SetOnline(true)

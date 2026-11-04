@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/IstiN/fa_network/internal/auth"
@@ -48,7 +49,16 @@ type Server struct {
 	deliveries  *deliveryCache
 	triggers    *triggers.Service
 	tickets     *ticketStore
+	// touchMu/lastTouch throttle retention stamps: without it every
+	// authed HTTP request fires TWO store writes (session + network
+	// activity) — pure write amplification for polling clients.
+	touchMu   sync.Mutex
+	lastTouch map[string]time.Time
 }
+
+// touchThrottle bounds how often one session's activity is persisted;
+// the retention clock only needs minute-scale freshness.
+const touchThrottle = time.Minute
 
 // New builds the server and starts its relay loop.
 func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispatcher *wakeup.Dispatcher, cfg Config) *Server {

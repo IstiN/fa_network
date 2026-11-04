@@ -60,6 +60,7 @@ func (s *Server) handleAgentEnrollment(w http.ResponseWriter, r *http.Request, i
 		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return
 	}
+	s.relay.InvalidateOwned(networkID) // enrollment changed: refresh cache
 	secret, err := issue(ctx, req.Name)
 	if err != nil {
 		message := "hub enrollment failed"

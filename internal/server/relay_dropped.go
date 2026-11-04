@@ -25,14 +25,15 @@ func (r *Relay) loadDropped(ctx context.Context) {
 }
 
 // dropHubAgent applies a per-network roster exclusion in memory (the
-// store already persists it).
+// store already persists it) and refreshes the enrollment cache.
 func (r *Relay) dropHubAgent(networkID, agentID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.dropped[networkID] == nil {
 		r.dropped[networkID] = map[string]bool{}
 	}
 	r.dropped[networkID][agentID] = true
+	r.mu.Unlock()
+	r.InvalidateOwned(networkID)
 }
 
 // isDropped reports the per-network exclusion (idempotent drop checks).

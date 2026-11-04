@@ -20,9 +20,7 @@ func TestPresenceChangedScopedToOwningNetwork(t *testing.T) {
 	sessB, _ := env.join(t, netB, "secret123", "", ownerJWT)
 
 	// Agent "scoped-agent" enrolled by netA only.
-	if err := env.st.ClaimAgentOwner(context.Background(), netA, "scoped-agent"); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
+	env.enrollAgent(netA, "scoped-agent")
 	env.hub.SetPresence([]hub.PresenceInfo{{AgentID: "a-9", Name: "scoped-agent", Online: true}})
 	env.hub.SetOnline(false)
 	env.hub.SetOnline(true)
