@@ -280,10 +280,20 @@ paths:
         - **guest** (no JWT): `displayName` required; the joiner rides as an
           **agent-class identity** — same wire class as fa agents.
 
+        §2 — password is a FIRST-ADMISSION credential: a request whose
+        bearer JWT already belongs to an existing member of this network
+        rejoins by the token alone and needs no body at all. The password
+        (still required in the schema for the general case) is demanded
+        again only after the membership row was removed — kick / leave /
+        membership reset. Guests and first-time authed joiners always
+        present it; JWT validation failures never bypass join rate
+        limiting.
+
         Catalogued (`public: true`) networks still require the password —
         the catalog is discovery only, never open access.
         Wrong password → `403 invalid_credentials` with throttling (E1: no
         channel-existence oracle, `Retry-After` on repeated failures).
+        Missing/empty password on a password join → `400 invalid_credentials`.
       security:
         - authJwt: []
         - sessionToken: []

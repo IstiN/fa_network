@@ -121,9 +121,16 @@ type joinRequest struct {
 	DisplayName string `json:"displayName"`
 }
 
-// joinNetwork implements POST /api/networks/{id}/join (AC-B2). Auth is
+// joinNetwork implements POST /api/networks/{id}/join (AC-B2, §2). Auth is
 // OPTIONAL: authed joiners carry the locked auth-service name; guests ride
 // as agent-class identities with deduped display names.
+//
+// §2: the network password is a FIRST-ADMISSION credential. An existing
+// member with a valid bearer JWT rejoins by the token alone — body decode
+// and password verify are skipped entirely. Re-entering the password is
+// required again only after the membership row was removed (kick / leave /
+// reset). Guests and first-time authed joiners use the unchanged password
+// path below; a missing or invalid JWT never bypasses its rate limiting.
 func (s *Server) joinNetwork(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	networkID := r.PathValue("networkId")
@@ -135,6 +142,10 @@ func (s *Server) joinNetwork(w http.ResponseWriter, r *http.Request) {
 	failKey := clientIP(r) + "|" + network.ID
 	if blocked, retry := s.failures.Blocked(failKey, 5); blocked {
 		writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "too many failed attempts", retry)
+		return
+	}
+	if principal, ok := s.memberPrincipal(r, network); ok {
+		s.joinAsAuthed(w, r, network, principal)
 		return
 	}
 	var req joinRequest
@@ -153,14 +164,32 @@ func (s *Server) joinNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	s.failures.Reset(failKey)
 
-	token := bearerToken(r)
-	if token != "" {
-		if principal, err := s.auth.Validate(ctx, token); err == nil {
-			s.joinAsAuthed(w, r, network, principal)
-			return
-		}
+	if principal, err := s.auth.Validate(ctx, bearerToken(r)); err == nil {
+		s.joinAsAuthed(w, r, network, principal)
+		return
 	}
 	s.joinAsGuest(w, r, network, req.DisplayName)
+}
+
+// memberPrincipal reports whether the bearer JWT identifies an existing
+// member of this network (§2 auth-first re-entry) and returns the
+// principal. No token, an invalid one, or a valid JWT without a membership
+// row (first admission) all mean "not yet" — the caller falls through to
+// the password path, so JWT validation failure cannot skip rate limiting.
+func (s *Server) memberPrincipal(r *http.Request, network *model.Network) (*auth.Principal, bool) {
+	ctx := r.Context()
+	token := bearerToken(r)
+	if token == "" {
+		return nil, false
+	}
+	principal, err := s.auth.Validate(ctx, token)
+	if err != nil {
+		return nil, false
+	}
+	if _, err := s.st.Member(ctx, network.ID, principal.UserID); err != nil {
+		return nil, false
+	}
+	return principal, true
 }
 
 const minuteWindow = time.Minute

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/IstiN/fa_network/internal/model"
+	"github.com/IstiN/fa_network/internal/store"
 )
 
 // AC-B1: create network requires a valid JWT; creator becomes owner;
@@ -93,6 +94,94 @@ func TestJoinTwoClassesACB2(t *testing.T) {
 	}
 }
 
+
+// §2 auth-first re-entry: an existing member rejoins by JWT alone — the
+// network password is a first-admission credential, demanded again only
+// once the membership row is gone (kick). Guests and the password-path
+// error contract are unchanged.
+func TestJoinAuthFirstRentry(t *testing.T) {
+	env := newTestEnv(t)
+	owner := env.authedToken("owner1", "Owner One")
+	id := env.createNetwork(t, owner, "fa-team", "secret123")
+	alice := env.authedToken("alice", "Alice A.")
+	ownerSess, _ := env.join(t, id, "secret123", "", owner)
+
+	// First admission: a valid JWT without membership still needs the
+	// password (400 invalid_credentials, the password-path guard).
+	rec := env.do("POST", "/api/networks/"+id+"/join", nil, alice)
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != CodeInvalidCreds {
+		t.Fatalf("first admission sans password: %d %s", rec.Code, rec.Body.String())
+	}
+	_, out := env.join(t, id, "secret123", "", alice)
+	first := out["identity"].(map[string]any)
+	if first["class"] != model.ClassMember || first["id"] != "alice" {
+		t.Fatalf("first identity = %v", first)
+	}
+
+	// §2: rejoin by the bearer token alone — no body at all.
+	rec = env.do("POST", "/api/networks/"+id+"/join", nil, alice)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("jwt-only rejoin: %d %s", rec.Code, rec.Body.String())
+	}
+	var again struct {
+		Identity struct {
+			ID    string `json:"id"`
+			Class string `json:"class"`
+		} `json:"identity"`
+	}
+	decodeBody(t, rec, &again)
+	if again.Identity.ID != "alice" || again.Identity.Class != model.ClassMember {
+		t.Fatalf("re-entry identity = %+v", again.Identity)
+	}
+	// Upsert, not duplicate: still exactly one membership row for alice.
+	rows, err := env.st.Members(t.Context(), id)
+	if err != nil {
+		t.Fatalf("members: %v", err)
+	}
+	n := 0
+	for _, m := range rows {
+		if m.ID == "alice" {
+			n++
+			if m.Class != model.ClassMember {
+				t.Fatalf("re-entry class = %s", m.Class)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("alice rows = %d, want 1", n)
+	}
+
+	// Kick removes the membership → the password is required again.
+	if rec := env.do("DELETE", "/api/networks/"+id+"/members/alice", nil, ownerSess); rec.Code != http.StatusNoContent {
+		t.Fatalf("kick status = %d body %s", rec.Code, rec.Body.String())
+	}
+	if _, err := env.st.Member(t.Context(), id, "alice"); !store.IsNotFound(err) {
+		t.Fatalf("post-kick member err = %v, want NotFound", err)
+	}
+	rec = env.do("POST", "/api/networks/"+id+"/join", nil, alice)
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != CodeInvalidCreds {
+		t.Fatalf("post-kick jwt-only rejoin: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = env.do("POST", "/api/networks/"+id+"/join", map[string]string{"password": "wrong"}, alice)
+	if rec.Code != http.StatusForbidden || errCode(t, rec) != CodeInvalidCreds {
+		t.Fatalf("post-kick wrong password: %d %s", rec.Code, rec.Body.String())
+	}
+	sess, out := env.join(t, id, "secret123", "", alice)
+	if sess == "" || out["identity"].(map[string]any)["class"] != model.ClassMember {
+		t.Fatalf("readmission after kick failed: %v", out)
+	}
+
+	// Guests are untouched: no token + no password → 400; no token +
+	// password → agent-class identity (AC-B2 path unchanged).
+	rec = env.do("POST", "/api/networks/"+id+"/join", map[string]string{"displayName": "g"}, "")
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != CodeInvalidCreds {
+		t.Fatalf("guest sans password: %d %s", rec.Code, rec.Body.String())
+	}
+	_, out = env.join(t, id, "secret123", "web-surfer", "")
+	if out["identity"].(map[string]any)["class"] != model.ClassGuest {
+		t.Fatalf("guest identity = %v", out["identity"])
+	}
+}
 // AC-B3: management routes reject guest tokens (and unauthenticated
 // callers); no management route accepts one.
 func TestManagementRejectsGuestsACB3(t *testing.T) {
