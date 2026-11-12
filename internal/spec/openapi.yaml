@@ -857,6 +857,67 @@ paths:
         '429':
           $ref: '#/components/responses/Throttled'
 
+  /api/devices/{deviceId}/roster:
+    patch:
+      tags: [devices]
+      summary: Patch the device's roster projection (exposure flags + dmPub)
+      description: |
+        Machine-connector contract §6/§9: exposure flags live locally on
+        the connector; this route pushes the server-side projection the
+        network roster read model serves. Agents carry one exposure flag
+        (plus dmPub — public directory material); sessions carry their
+        own per-network exposure lists (personal default ON, shared
+        networks default OFF — owner decision §0.2). Auth: the device's
+        own deviceToken or the owner's JWT.
+      security:
+        - authJwt: []
+        - deviceToken: []
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agents:
+                  type: array
+                  maxItems: 256
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: { type: string }
+                      state: { type: string, enum: [live, busy, offline] }
+                      exposed: { type: boolean }
+                      dmPub: { type: string, description: X25519 pubkey (base64) for DM (§7) }
+                sessions:
+                  type: array
+                  maxItems: 256
+                  items:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { type: string }
+                      state: { type: string, enum: [live, wake-on-DM, offline] }
+                      networks:
+                        type: array
+                        items: { type: string }
+                        description: Networks the session is exposed to.
+      responses:
+        '200':
+          description: Projection updated.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ForbiddenClass'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/devices/{deviceId}:
     delete:
       tags: [devices]
@@ -882,6 +943,64 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /api/networks/{networkId}/devices:
+    get:
+      tags: [devices]
+      summary: Device roster of a network (exposed entries only)
+      description: |
+        Machine-connector contract §9: the machines of every member user,
+        each with its machine presence (online / degraded / offline —
+        server-inferred, truth = server receive time), exposed agents
+        (with dmPub) and sessions exposed to THIS network. Read for
+        every member (showcase rule). Exposure filtering is the
+        deny-by-default boundary: a fresh device in a shared network
+        publishes zero sessions until the owner opts in per network.
+      security:
+        - sessionToken: []
+        - authJwt: []
+      parameters:
+        - name: networkId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device roster.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      required: [deviceId, name, presence, userId]
+                      properties:
+                        deviceId: { type: string }
+                        name: { type: string }
+                        presence: { type: string, enum: [online, degraded, offline] }
+                        userId: { type: string }
+                        agents:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name: { type: string }
+                              state: { type: string, enum: [live, busy, offline] }
+                              dmPub: { type: string }
+                        sessions:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id: { type: string }
+                              state: { type: string, enum: [live, wake-on-DM, offline] }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/ws-ticket:
     post:

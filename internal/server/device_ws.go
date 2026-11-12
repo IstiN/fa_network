@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
-
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -46,6 +46,10 @@ type deviceFrame struct {
 	// roster-only: public directory entries (names/presence/classes —
 	// never message content), plaintext like the member-WS roster.
 	Entries []model.MemberWire `json:"entries,omitempty"`
+	// presence-only (§5): agent states + exposed session leases riding
+	// inside the machine presence frame.
+	Agents   []deviceAgentWire   `json:"agents,omitempty"`
+	Sessions []deviceSessionWire `json:"sessions,omitempty"`
 	// hello-only fields
 	DeviceID     string `json:"deviceId,omitempty"`
 	RosterDigest string `json:"rosterDigest,omitempty"`
@@ -131,6 +135,35 @@ func (r *DeviceRegistry) Online(deviceID string) bool {
 	defer r.mu.Unlock()
 	_, ok := r.cons[deviceID]
 	return ok
+}
+
+// OfUsers returns the live sockets of the given users (device mail
+// fanout: one frame per member device per envelope).
+func (r *DeviceRegistry) OfUsers(userIDs []string) []*deviceConn {
+	want := make(map[string]bool, len(userIDs))
+	for _, id := range userIDs {
+		want[id] = true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*deviceConn
+	for _, conn := range r.cons {
+		if want[conn.device.UserID] {
+			out = append(out, conn)
+		}
+	}
+	return out
+}
+
+// All returns every live device socket (sweeper broadcasts).
+func (r *DeviceRegistry) All() []*deviceConn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*deviceConn, 0, len(r.cons))
+	for _, conn := range r.cons {
+		out = append(out, conn)
+	}
+	return out
 }
 
 // Kick force-closes a device's socket (revocation path).
@@ -233,6 +266,7 @@ func (s *Server) serveDeviceWS(w http.ResponseWriter, r *http.Request, deviceTok
 	}
 	s.deviceConns.Add(dc)
 	box := s.deviceMail.of(device.ID)
+	s.deviceExposure.SetMachine(device.ID, MachineOnline, s.cfg.Now())
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -240,14 +274,34 @@ func (s *Server) serveDeviceWS(w http.ResponseWriter, r *http.Request, deviceTok
 	go s.deviceWriteLoop(ctx, conn, dc, box)
 
 	if !s.deviceHandshake(ctx, conn, dc, box) {
+		s.deviceExposure.SetMachine(device.ID, MachineOffline, s.cfg.Now())
 		dc.closeConn()
 		<-writeDone
 		return
 	}
-	s.deviceReadPump(ctx, conn, dc, box)
+	readPumpErr := s.deviceReadPump(ctx, conn, dc, box)
 	dc.closeConn()
 	s.deviceConns.Remove(dc)
+	// Machine-state inference on socket loss (§5): a clean close (the
+	// connector sent a close frame) deregisters immediately; an abnormal
+	// drop (network gone, process killed) opens the degraded grace
+	// window — local agents keep working while it runs.
+	if isCleanWSClose(readPumpErr) {
+		s.deviceExposure.SetMachine(device.ID, MachineOffline, s.cfg.Now())
+	} else {
+		s.deviceExposure.SetMachine(device.ID, MachineDegraded, s.cfg.Now())
+	}
 	<-writeDone
+}
+
+// isCleanWSClose reports whether the socket ended with a close frame
+// (intentional teardown) rather than a transport-level drop.
+func isCleanWSClose(err error) bool {
+	var ce *websocket.CloseError
+	if errors.As(err, &ce) {
+		return ce.Code == websocket.StatusNormalClosure || ce.Code == websocket.StatusGoingAway
+	}
+	return false
 }
 
 // deviceHandshake waits for hello, replies hello_ok + roster snapshot
@@ -354,12 +408,13 @@ func (s *Server) deviceSend(dc *deviceConn, f deviceFrame) {
 	}
 }
 
-// deviceReadPump routes inbound frames until disconnect.
-func (s *Server) deviceReadPump(ctx context.Context, conn *websocket.Conn, dc *deviceConn, box *deviceMailbox) {
+// deviceReadPump routes inbound frames until disconnect, reporting the
+// terminal read error (clean-close inference upstream).
+func (s *Server) deviceReadPump(ctx context.Context, conn *websocket.Conn, dc *deviceConn, box *deviceMailbox) error {
 	for {
 		_, raw, err := conn.Read(ctx)
 		if err != nil {
-			return
+			return err
 		}
 		var f deviceFrame
 		if json.Unmarshal(raw, &f) != nil {
@@ -372,10 +427,9 @@ func (s *Server) deviceReadPump(ctx context.Context, conn *websocket.Conn, dc *d
 		case kindAck:
 			box.Ack(f.RefID)
 		case kindMail:
-			// Routing (contract §3) lands with phase B; ackless mail
-			// would be lost on the client side — reject explicitly.
-			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindError, RefID: f.MsgID,
-				TS: s.cfg.Now().UTC().Format(time.RFC3339), Ciphertext: `{"code":"not_routed_yet"}`})
+			s.deviceMailRoute(ctx, dc, f)
+		case kindPresence:
+			s.deviceExposure.ApplyPresence(dc.device.ID, f.Agents, f.Sessions, s.cfg.Now())
 		default:
 			// hello outside handshake, unknown kinds: ignore (log-free
 			// noise discipline; the connector retries with hello).

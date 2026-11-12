@@ -127,6 +127,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		s.relay.Outbound(r.Context(), env)
 		s.relay.Mentions(r.Context(), channel.NetworkID, env)
 		s.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+		s.fanoutDeviceMail(channel.NetworkID, env)
 	}
 	if !stored {
 		w.WriteHeader(http.StatusAccepted)

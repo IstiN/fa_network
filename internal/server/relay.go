@@ -24,6 +24,9 @@ type Relay struct {
 	sessions *SessionRegistry
 	wake     *wakeup.Dispatcher
 	now      func() time.Time
+	// deviceFanout mirrors stored hub-inbound envelopes onto device
+	// sockets (machine-connector §3); wired by New, nil-safe.
+	deviceFanout func(networkID string, env *model.Envelope)
 
 	mu        sync.Mutex
 	queues    map[string][]*model.Envelope // channelID -> pending outbound
@@ -218,6 +221,9 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 		return // id-dedup: already stored (AC3)
 	}
 	r.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+	if r.deviceFanout != nil {
+		r.deviceFanout(channel.NetworkID, env)
+	}
 }
 
 // joinAllChannels (re)subscribes the fresh hub connection to every known

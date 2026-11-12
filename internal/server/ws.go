@@ -238,6 +238,7 @@ func (s *Server) wsEnvelopeSend(ctx context.Context, ws *wsConn, member *model.M
 	s.relay.Outbound(ctx, env)
 	s.relay.Mentions(ctx, channel.NetworkID, env)
 	s.sessions.FanoutEnvelope(channel.NetworkID, model.EnvelopeWireOf(env))
+	s.fanoutDeviceMail(channel.NetworkID, env)
 }
 
 // wsSendAllowed applies the same guards as the REST send path: public

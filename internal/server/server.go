@@ -35,22 +35,23 @@ type Config struct {
 
 // Server is the fa_network edge: REST + WS over one mux.
 type Server struct {
-	st          store.Store
-	auth        auth.Provider
-	hub         hub.Client
-	wake        *wakeup.Dispatcher
-	cfg         Config
-	relay       *Relay
-	sessions    *SessionRegistry
-	limiter     *RateLimiter
-	corsOrigins []string
-	passwords   *Passwords
-	failures    *FailureTracker
-	deliveries  *deliveryCache
-	triggers    *triggers.Service
-	tickets     *ticketStore
-	deviceConns *DeviceRegistry
-	deviceMail  *deviceMailboxes
+	st             store.Store
+	auth           auth.Provider
+	hub            hub.Client
+	wake           *wakeup.Dispatcher
+	cfg            Config
+	relay          *Relay
+	sessions       *SessionRegistry
+	limiter        *RateLimiter
+	corsOrigins    []string
+	passwords      *Passwords
+	failures       *FailureTracker
+	deliveries     *deliveryCache
+	triggers       *triggers.Service
+	tickets        *ticketStore
+	deviceConns    *DeviceRegistry
+	deviceMail     *deviceMailboxes
+	deviceExposure *DeviceExposure
 	// touchMu/lastTouch throttle retention stamps: without it every
 	// authed HTTP request fires TWO store writes (session + network
 	// activity) — pure write amplification for polling clients.
@@ -74,22 +75,24 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		cfg.ChannelBytesCap = 256 << 20
 	}
 	s := &Server{
-		st:          st,
-		auth:        authProvider,
-		hub:         hubClient,
-		wake:        dispatcher,
-		cfg:         cfg,
-		sessions:    NewSessionRegistry(),
-		limiter:     NewRateLimiter(),
-		passwords:   NewPasswords(),
-		failures:    NewFailureTracker(),
-		deliveries:  newDeliveryCache(),
-		triggers:    cfg.Triggers,
-		tickets:     newTicketStore(cfg.Now),
-		deviceConns: NewDeviceRegistry(),
-		deviceMail:  newDeviceMailboxes(),
+		st:             st,
+		auth:           authProvider,
+		hub:            hubClient,
+		wake:           dispatcher,
+		cfg:            cfg,
+		sessions:       NewSessionRegistry(),
+		limiter:        NewRateLimiter(),
+		passwords:      NewPasswords(),
+		failures:       NewFailureTracker(),
+		deliveries:     newDeliveryCache(),
+		triggers:       cfg.Triggers,
+		tickets:        newTicketStore(cfg.Now),
+		deviceConns:    NewDeviceRegistry(),
+		deviceMail:     newDeviceMailboxes(),
+		deviceExposure: newDeviceExposure(),
 	}
 	s.relay = NewRelay(st, hubClient, s.sessions, dispatcher, cfg.Now)
+	s.relay.deviceFanout = s.fanoutDeviceMail
 	if len(cfg.CORSOrigins) == 0 {
 		cfg.CORSOrigins = defaultCORSOrigins()
 	}
@@ -121,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ws-ticket", s.issueWSTicket)
 	mux.HandleFunc("POST /api/devices/enroll", s.enrollDevice)
 	mux.HandleFunc("DELETE /api/devices/{deviceId}", s.revokeDevice)
+	mux.HandleFunc("PATCH /api/devices/{deviceId}/roster", s.patchDeviceRoster)
+	mux.HandleFunc("GET /api/networks/{networkId}/devices", s.listNetworkDevices)
 	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
 	mux.HandleFunc("GET /docs", serveDocs)
@@ -163,6 +168,7 @@ func (s *Server) Handler() http.Handler {
 // RunRelay starts background loops (hub event pump, retention sweeper).
 func (s *Server) RunRelay(ctx Ctx) {
 	go s.relay.Run(ctx)
+	go s.devicePresenceLoop(ctx)
 	if s.cfg.RetentionInactivityDays > 0 {
 		go s.retentionLoop(ctx)
 	}
