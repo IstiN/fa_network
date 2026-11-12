@@ -107,17 +107,17 @@ func TestTicketStoreExpiryAndSingleConsume(t *testing.T) {
 	now := time.Now()
 	store := newTicketStore(func() time.Time { return now })
 
-	id := store.issue("sess-tok")
+	id := store.issue("sess-tok", false)
 	now = now.Add(wsTicketTL + time.Second)
-	if tok, ok := store.consume(id); ok || tok != "" {
+	if tok, device, ok := store.consume(id); ok || device || tok != "" {
 		t.Fatal("expired ticket consumed")
 	}
 
-	id = store.issue("sess-tok-2")
-	if tok, ok := store.consume(id); !ok || tok != "sess-tok-2" {
-		t.Fatalf("fresh ticket consume = %q %v", tok, ok)
+	id = store.issue("sess-tok-2", false)
+	if tok, device, ok := store.consume(id); !ok || device || tok != "sess-tok-2" {
+		t.Fatalf("fresh ticket consume = %q %v %v", tok, device, ok)
 	}
-	if _, ok := store.consume(id); ok {
+	if _, _, ok := store.consume(id); ok {
 		t.Fatal("ticket consumed twice")
 	}
 }

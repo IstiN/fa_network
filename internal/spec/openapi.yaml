@@ -48,6 +48,7 @@ tags:
   - name: agents
   - name: wakeups
   - name: webhooks
+  - name: devices
 
 paths:
   /api/dev/login:
@@ -808,10 +809,84 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/devices/enroll:
+    post:
+      tags: [devices]
+      summary: Enroll a connector device (machine-connector contract §1/§2)
+      description: |
+        Registers the calling machine as a connector device of the
+        authenticated user: mints `deviceId` + `deviceToken` (returned
+        ONCE — stored server-side only as sha256) and auto-provisions the
+        user's personal network on first enroll (owner = the user,
+        private, no join-password semantics). Rate-limited to 10/min per
+        user.
+      security:
+        - authJwt: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 128
+                  description: Optional display name of the host.
+      responses:
+        '201':
+          description: Device enrolled; personal network present.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceId, deviceToken, personalNetwork]
+                properties:
+                  deviceId:
+                    type: string
+                    description: Stable UUID — keep it in the device key store.
+                  deviceToken:
+                    type: string
+                    description: |
+                      Opaque bearer (deviceToken scheme). Shown once; store
+                      it in the device key store (Keychain / keystore /
+                      chrome.storage / ~/.fah).
+                  personalNetwork:
+                    $ref: '#/components/schemas/Network'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/Throttled'
+
+  /api/devices/{deviceId}:
+    delete:
+      tags: [devices]
+      summary: Revoke a device (closes its sockets, rejects its tickets)
+      description: |
+        The owner's JWT or the device's own deviceToken. Revocation kicks
+        live device sockets, removes the token from the auth index and
+        rejects future WS-ticket mints. Foreign devices read as 404
+        (no existence oracle).
+      security:
+        - authJwt: []
+        - deviceToken: []
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/ws-ticket:
     post:
       tags: [realtime]
-      summary: Mint a single-use WebSocket ticket (browser WS auth)
+      summary: Mint a single-use WebSocket ticket (member or device scope)
       description: |
         Browser WebSocket clients cannot set Authorization headers, so the
         session bearer used to ride in `/ws?token=` and land in ingress
@@ -823,8 +898,15 @@ paths:
         30/min per member. Tickets are held in service memory, which
         matches the single-instance deployment; scaling past one instance
         requires a shared ticket store first.
+
+        Device scope (machine-connector contract §4): the bearer may be a
+        `deviceToken` (issued by POST /api/devices/enroll) — the response
+        then carries `scope: "device"` and the ticket upgrades onto the
+        device WS protocol (`kind: hello` handshake, envelope v1 frames).
+        Device tickets die with device revocation.
       security:
         - sessionToken: []
+        - deviceToken: []
       responses:
         '200':
           description: Ticket minted.
@@ -841,6 +923,10 @@ paths:
                     type: integer
                     example: 60
                     description: Ticket lifetime in seconds.
+                  scope:
+                    type: string
+                    enum: [member, device]
+                    description: Which credential the ticket redeems.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -855,6 +941,15 @@ paths:
         single-use `?ticket=<ticket>` minted by `POST /api/ws-ticket`
         (recommended for browser clients — review #7); legacy
         `?token=<sessionToken>` (deprecated, kept until clients migrate).
+        A device-scope ticket (`scope: "device"`, machine-connector
+        contract §4) selects the device protocol instead: envelope v1
+        JSON frames — `hello` (deviceId) → `hello_ok` (refId) + `roster`
+        snapshot + redelivery of unacked `mail` in seq order; `ack`
+        (refId = delivered msgId) after the local write; `ping`/`pong`
+        ~20s, half-open sockets dropped (~45s). `msgId` doubles as the
+        fanet1 frameId inside `ciphertext` — the server redelivers
+        byte-for-byte and never rewrites ids (contract v1.1 §3). One
+        upstream socket per device; a second dial evicts the first.
         One socket
         per session; heartbeat every 30s (ghost presence cleanup beyond two
         missed beats — E7). While the dap hub is unreachable the socket
@@ -1208,6 +1303,15 @@ components:
         fa_network session token issued by join. Memory/sessionStorage only —
         dies with the page (E7). Carries the member class (owner / admin /
         member / guest).
+    deviceToken:
+      type: http
+      scheme: bearer
+      description: |
+        Opaque device bearer issued by POST /api/devices/enroll, bound to
+        (userId, deviceId) — machine-connector contract §1. Stored
+        server-side only as sha256. Authenticates device WS tickets and
+        device-scoped routes. Rotatable by re-enroll; revocation closes
+        sockets and rejects tickets.
 
   responses:
     Unauthorized:

@@ -28,11 +28,12 @@ const (
 	wsTicketRatePer = time.Minute
 )
 
-// ticketEntry is one outstanding ticket: the session token it redeems and
-// its expiry.
+// ticketEntry is one outstanding ticket: the credential it redeems (a
+// session token, or a deviceToken in the device scope) and its expiry.
 type ticketEntry struct {
-	token string
-	exp   time.Time
+	token  string
+	exp    time.Time
+	device bool
 }
 
 // ticketStore mints and redeems tickets. consume deletes before
@@ -50,7 +51,9 @@ func newTicketStore(now func() time.Time) *ticketStore {
 
 // issue records one ticket and sweeps expired entries (the sweep keeps
 // the map bounded; issuing is rate-limited per member on top of that).
-func (t *ticketStore) issue(token string) string {
+// device=true mints a device-scope ticket (redeems a deviceToken,
+// machine-connector contract §4).
+func (t *ticketStore) issue(token string, device bool) string {
 	id := newToken()
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -59,13 +62,13 @@ func (t *ticketStore) issue(token string) string {
 			delete(t.entries, k)
 		}
 	}
-	t.entries[id] = ticketEntry{token: token, exp: t.now().Add(wsTicketTL)}
+	t.entries[id] = ticketEntry{token: token, exp: t.now().Add(wsTicketTL), device: device}
 	return id
 }
 
 // consume atomically removes a ticket; ok is false for unknown, already
-// used, or expired tickets.
-func (t *ticketStore) consume(id string) (string, bool) {
+// used, or expired tickets. The device flag selects the upgrade path.
+func (t *ticketStore) consume(id string) (string, bool, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e, ok := t.entries[id]
@@ -73,13 +76,14 @@ func (t *ticketStore) consume(id string) (string, bool) {
 		delete(t.entries, id)
 	}
 	if !ok || t.now().After(e.exp) {
-		return "", false
+		return "", false, false
 	}
-	return e.token, true
+	return e.token, e.device, true
 }
 
-// issueWSTicket implements POST /api/ws-ticket: Bearer <sessionToken> in,
-// {ticket, expiresIn} out.
+// issueWSTicket implements POST /api/ws-ticket: Bearer <sessionToken>
+// (member scope) or Bearer <deviceToken> (device scope, machine
+// connector §4) in, {ticket, expiresIn} out.
 func (s *Server) issueWSTicket(w http.ResponseWriter, r *http.Request) {
 	token := bearerToken(r)
 	if token == "" {
@@ -87,16 +91,31 @@ func (s *Server) issueWSTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.st.Session(r.Context(), token)
-	if err != nil {
+	if err == nil {
+		if !s.limiter.Allow("wsticket|"+sess.MemberID, wsTicketRateN, wsTicketRatePer) {
+			writeError(w, http.StatusTooManyRequests, CodeThrottled, "too many ticket requests")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ticket":    s.tickets.issue(token, false),
+			"expiresIn": int(wsTicketTL.Seconds()),
+			"scope":     "member",
+		})
+		return
+	}
+	// Device scope: the bearer must be a live deviceToken.
+	device := s.deviceByToken(r.Context(), token)
+	if device == nil {
 		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "invalid session token")
 		return
 	}
-	if !s.limiter.Allow("wsticket|"+sess.MemberID, wsTicketRateN, wsTicketRatePer) {
+	if !s.limiter.Allow("wsticket|device|"+device.ID, wsTicketRateN, wsTicketRatePer) {
 		writeError(w, http.StatusTooManyRequests, CodeThrottled, "too many ticket requests")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ticket":    s.tickets.issue(token),
+		"ticket":    s.tickets.issue(token, true),
 		"expiresIn": int(wsTicketTL.Seconds()),
+		"scope":     "device",
 	})
 }

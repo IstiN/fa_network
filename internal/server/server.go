@@ -49,6 +49,8 @@ type Server struct {
 	deliveries  *deliveryCache
 	triggers    *triggers.Service
 	tickets     *ticketStore
+	deviceConns *DeviceRegistry
+	deviceMail  *deviceMailboxes
 	// touchMu/lastTouch throttle retention stamps: without it every
 	// authed HTTP request fires TWO store writes (session + network
 	// activity) — pure write amplification for polling clients.
@@ -72,18 +74,20 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		cfg.ChannelBytesCap = 256 << 20
 	}
 	s := &Server{
-		st:         st,
-		auth:       authProvider,
-		hub:        hubClient,
-		wake:       dispatcher,
-		cfg:        cfg,
-		sessions:   NewSessionRegistry(),
-		limiter:    NewRateLimiter(),
-		passwords:  NewPasswords(),
-		failures:   NewFailureTracker(),
-		deliveries: newDeliveryCache(),
-		triggers:   cfg.Triggers,
-		tickets:    newTicketStore(cfg.Now),
+		st:          st,
+		auth:        authProvider,
+		hub:         hubClient,
+		wake:        dispatcher,
+		cfg:         cfg,
+		sessions:    NewSessionRegistry(),
+		limiter:     NewRateLimiter(),
+		passwords:   NewPasswords(),
+		failures:    NewFailureTracker(),
+		deliveries:  newDeliveryCache(),
+		triggers:    cfg.Triggers,
+		tickets:     newTicketStore(cfg.Now),
+		deviceConns: NewDeviceRegistry(),
+		deviceMail:  newDeviceMailboxes(),
 	}
 	s.relay = NewRelay(st, hubClient, s.sessions, dispatcher, cfg.Now)
 	if len(cfg.CORSOrigins) == 0 {
@@ -113,8 +117,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /skill.md", serveSiteFile("SKILL.md", "text/markdown"))
 	mux.HandleFunc("GET /llms.txt", serveSiteFile("llms.txt", "text/plain"))
 	mux.HandleFunc("GET /api/healthz", Healthz) // GFE eats /healthz upstream
-	mux.HandleFunc("GET /healthz", Healthz)      // local dev convenience
+	mux.HandleFunc("GET /healthz", Healthz)     // local dev convenience
 	mux.HandleFunc("POST /api/ws-ticket", s.issueWSTicket)
+	mux.HandleFunc("POST /api/devices/enroll", s.enrollDevice)
+	mux.HandleFunc("DELETE /api/devices/{deviceId}", s.revokeDevice)
 	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
 	mux.HandleFunc("GET /docs", serveDocs)

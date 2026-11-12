@@ -10,17 +10,17 @@ import (
 // CreateNetwork implements Networks.
 func (p *PGStore) CreateNetwork(ctx context.Context, n *model.Network) error {
 	_, err := p.db.ExecContext(ctx,
-		`INSERT INTO networks (id, name, owner_id, admins, public_channels, password_hash, password_salt, public, created_at, last_activity)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
+		`INSERT INTO networks (id, name, owner_id, admins, public_channels, password_hash, password_salt, public, kind, created_at, last_activity)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`,
 		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels),
-		n.PasswordHash, n.PasswordSalt, n.Public, n.CreatedAt.UTC())
+		n.PasswordHash, n.PasswordSalt, n.Public, n.Kind, n.CreatedAt.UTC())
 	return mapErr(err)
 }
 
 func (p *PGStore) scanNetwork(row interface{ Scan(...any) error }) (*model.Network, error) {
 	var n model.Network
 	var admins, public []byte
-	err := row.Scan(&n.ID, &n.Name, &n.OwnerID, &admins, &public, &n.PasswordHash, &n.PasswordSalt, &n.Public, &n.CreatedAt)
+	err := row.Scan(&n.ID, &n.Name, &n.OwnerID, &admins, &public, &n.PasswordHash, &n.PasswordSalt, &n.Public, &n.Kind, &n.CreatedAt)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -29,7 +29,7 @@ func (p *PGStore) scanNetwork(row interface{ Scan(...any) error }) (*model.Netwo
 	return &n, nil
 }
 
-const networkCols = `id, name, owner_id, admins, public_channels, password_hash, password_salt, public, created_at`
+const networkCols = `id, name, owner_id, admins, public_channels, password_hash, password_salt, public, kind, created_at`
 
 // Network implements Networks.
 func (p *PGStore) Network(ctx context.Context, id string) (*model.Network, error) {
@@ -69,7 +69,7 @@ func (p *PGStore) PublicNetworks(ctx context.Context, after time.Time, afterID s
 func (p *PGStore) AccountNetworks(ctx context.Context, userID string) ([]*model.AccountNetwork, error) {
 	rows, err := p.db.QueryContext(ctx,
 		`SELECT n.id, n.name, n.owner_id, n.admins, n.public_channels,
-		        n.password_hash, n.password_salt, n.public, n.created_at, m.class
+		        n.password_hash, n.password_salt, n.public, n.kind, n.created_at, m.class
 		 FROM networks n JOIN members m ON m.network_id = n.id
 		 WHERE m.id = $1
 		 ORDER BY n.created_at DESC, n.id DESC`, userID)
@@ -92,7 +92,7 @@ func scanAccountNetworks(rows interface {
 		var class string
 		var admins, publicChannels []byte
 		if err := rows.Scan(&n.ID, &n.Name, &n.OwnerID, &admins, &publicChannels,
-			&n.PasswordHash, &n.PasswordSalt, &n.Public, &n.CreatedAt, &class); err != nil {
+			&n.PasswordHash, &n.PasswordSalt, &n.Public, &n.Kind, &n.CreatedAt, &class); err != nil {
 			return nil, mapErr(err)
 		}
 		_ = unmarshalJSON(admins, &n.Admins)

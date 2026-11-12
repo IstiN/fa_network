@@ -20,7 +20,8 @@ const (
 // serveWS implements GET /ws — the realtime session (WebSocket upgrade).
 // Auth: Bearer <sessionToken> from join, or a single-use ?ticket= minted
 // by POST /api/ws-ticket (browser clients; review #7), or the legacy
-// ?token= fallback. One socket per session.
+// ?token= fallback. One socket per session. A device-scope ticket
+// (machine-connector §4) selects the device protocol path instead.
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	token := bearerToken(r)
 	if token == "" {
@@ -28,7 +29,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		// validation, so a redeemed ticket can never be replayed even
 		// if the session underneath fails.
 		if t := r.URL.Query().Get("ticket"); t != "" {
-			if redeemed, ok := s.tickets.consume(t); ok {
+			if redeemed, isDevice, ok := s.tickets.consume(t); ok {
+				if isDevice {
+					s.serveDeviceWS(w, r, redeemed)
+					return
+				}
 				token = redeemed
 			}
 		}

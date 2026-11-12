@@ -37,6 +37,26 @@ type Networks interface {
 	PublicNetworks(ctx context.Context, after time.Time, afterID string, limit int) ([]*model.Network, error)
 	// MemberCount reports how many members a network has (catalog stat).
 	MemberCount(ctx context.Context, networkID string) (int, error)
+	// PersonalNetwork returns the user's auto-provisioned personal
+	// network (ErrNotFound when none exists yet — first device enroll
+	// or first login to the network surface).
+	PersonalNetwork(ctx context.Context, userID string) (*model.Network, error)
+}
+
+// Devices persists enrolled connector hosts (machines) of a user
+// (machine-connector contract §1). The device token is stored only as
+// its sha256 hash — the raw bearer is returned once at enroll.
+type Devices interface {
+	CreateDevice(ctx context.Context, d *model.Device) error
+	Device(ctx context.Context, deviceID string) (*model.Device, error)
+	// DeviceByTokenHash resolves a device by sha256(deviceToken) — the
+	// auth path for device-scoped WS tickets and REST. Revoked devices
+	// resolve to ErrNotFound (revocation == deletion for auth).
+	DeviceByTokenHash(ctx context.Context, hash []byte) (*model.Device, error)
+	DevicesOfUser(ctx context.Context, userID string) ([]*model.Device, error)
+	// RevokeDevice stamps revocation: live sockets are kicked and
+	// future ticket mints/redeems rejected.
+	RevokeDevice(ctx context.Context, deviceID string, at time.Time) error
 }
 
 // Members persists per-network member identities.
@@ -172,6 +192,7 @@ type Store interface {
 	Wakeups
 	AgentDrops
 	AgentOwnership
+	Devices
 	// TouchActivity stamps network session activity (retention clock).
 	TouchActivity(ctx context.Context, networkID string, at time.Time) error
 	// DeleteNetworkData wipes a whole network (retention cleanup).

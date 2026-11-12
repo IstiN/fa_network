@@ -32,6 +32,14 @@ type Identity struct {
 	NetworkID string
 }
 
+// Network kinds. Empty kind = a classic join-by-password network;
+// personal networks are auto-provisioned per user (machine-connector
+// contract §2) and never use join passwords.
+const (
+	NetworkShared   = "shared"
+	NetworkPersonal = "personal"
+)
+
 // Network is a joinable group of channels and members.
 type Network struct {
 	ID             string
@@ -41,7 +49,10 @@ type Network struct {
 	PublicChannels []string
 	// Public lists the network in the discovery catalog (opt-in
 	// metadata; listing never relaxes the join password).
-	Public    bool
+	Public bool
+	// Kind is "" (legacy shared) or "personal" (auto-provisioned,
+	// owner-exclusive; join-by-password does not apply).
+	Kind      string
 	CreatedAt time.Time
 	// PasswordHash is scrypt(salt, password), never returned by the API.
 	PasswordHash []byte
@@ -106,6 +117,19 @@ type Envelope struct {
 	// (relay-internal: read cursors and unread counts order by it; never
 	// part of any wire response).
 	Seq int64
+}
+
+// Device is one enrolled connector host (machine) of a user
+// (machine-connector contract §1). TokenHash is sha256(deviceToken):
+// the token itself is returned once at enroll and never stored —
+// credential hygiene matches the relay-only posture.
+type Device struct {
+	ID        string
+	UserID    string
+	Name      string
+	TokenHash []byte
+	CreatedAt time.Time
+	RevokedAt *time.Time
 }
 
 // Session is a browser session token issued by join (memory only, E7).

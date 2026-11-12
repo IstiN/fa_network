@@ -26,12 +26,13 @@ type MemStore struct {
 	// (read cursors order by it; deletion never renumbers).
 	chanSeq map[string]int64
 	// reads is userID -> channelID -> read cursor (envelope Seq).
-	reads   map[string]map[string]int64
-	wakeups map[string]*model.WakeupRegistration
+	reads      map[string]map[string]int64
+	wakeups    map[string]*model.WakeupRegistration
 	dispatches map[string][]model.WakeupDispatch
 	activity   map[string]time.Time       // networkID -> last session activity
 	dropped    map[string]map[string]bool // networkID -> dropped agentIDs
 	owners     map[string]string          // agentName -> owning networkID
+	devices    *deviceRegistry
 }
 
 // NewMemStore returns an empty in-memory store.
@@ -50,6 +51,7 @@ func NewMemStore() *MemStore {
 		activity:   map[string]time.Time{},
 		dropped:    map[string]map[string]bool{},
 		owners:     map[string]string{},
+		devices:    newDeviceRegistry(),
 	}
 }
 

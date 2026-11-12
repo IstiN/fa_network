@@ -141,7 +141,10 @@ func pingAndMigrate(ctx context.Context, db *sql.DB) (*PGStore, error) {
 }
 
 func migrate(ctx context.Context, db *sql.DB) (*PGStore, error) {
-	if err := execAll(ctx, db, append([]string{pgSchema}, pgAlterStatements...)...); err != nil {
+	stmts := append([]string{pgSchema}, pgAlterStatements...)
+	stmts = append(stmts, pgDeviceSchema)
+	stmts = append(stmts, pgDeviceAlter...)
+	if err := execAll(ctx, db, stmts...); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
