@@ -13,7 +13,7 @@ func (p *PGStore) CreateNetwork(ctx context.Context, n *model.Network) error {
 		`INSERT INTO networks (id, name, owner_id, admins, public_channels, password_hash, password_salt, public, kind, created_at, last_activity)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`,
 		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels),
-		n.PasswordHash, n.PasswordSalt, n.Public, n.Kind, n.CreatedAt.UTC())
+		nonNilBytes(n.PasswordHash), nonNilBytes(n.PasswordSalt), n.Public, n.Kind, n.CreatedAt.UTC())
 	return mapErr(err)
 }
 
@@ -47,7 +47,7 @@ func (p *PGStore) NetworkByName(ctx context.Context, name string) (*model.Networ
 func (p *PGStore) UpdateNetwork(ctx context.Context, n *model.Network) error {
 	res, err := p.db.ExecContext(ctx,
 		`UPDATE networks SET name=$2, owner_id=$3, admins=$4, public_channels=$5, password_hash=$6, password_salt=$7, public=$8 WHERE id=$1`,
-		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels), n.PasswordHash, n.PasswordSalt, n.Public)
+		n.ID, n.Name, n.OwnerID, marshalJSON(n.Admins), marshalJSON(n.PublicChannels), nonNilBytes(n.PasswordHash), nonNilBytes(n.PasswordSalt), n.Public)
 	return mapExecErr(res, err)
 }
 
@@ -220,4 +220,16 @@ func noRowsToNotFound(n int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// nonNilBytes maps a nil []byte to the empty bytea: password-less
+// networks (personal, contract §2 — join-by-password does not apply)
+// must satisfy the NOT NULL columns without inventing a hash value.
+// A nil Go slice binds as SQL NULL, which 500s every first enroll on
+// Postgres (SQLSTATE 23502) while the memory store silently accepts it.
+func nonNilBytes(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
 }

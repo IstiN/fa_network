@@ -79,6 +79,9 @@ func (p *PGStore) DeleteMember(ctx context.Context, networkID, id string) error 
 
 // CreateChannel implements Channels.
 func (p *PGStore) CreateChannel(ctx context.Context, c *model.Channel) error {
+	if c.ID == "" {
+		c.ID = chanID(c.NetworkID, c.Name)
+	}
 	_, err := p.db.ExecContext(ctx,
 		`INSERT INTO channels (id, network_id, name, public, acl, retention_days) VALUES ($1,$2,$3,$4,$5,$6)`,
 		c.ID, c.NetworkID, c.Name, c.Public, marshalJSON(c.ACL), nullableInt(c.RetentionDays))

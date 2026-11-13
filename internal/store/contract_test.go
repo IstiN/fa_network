@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -17,6 +18,26 @@ func ContractTest(t *testing.T, newStore func(t *testing.T) Store) {
 	t.Helper()
 	ctx := context.Background()
 
+	t.Run("password-less network (personal shape) stores empty bytea, not NULL", func(t *testing.T) {
+		s := newStore(t)
+		defer s.Close(ctx)
+		n := &model.Network{ID: "n-personal", Name: "personal-abc", OwnerID: "u-personal",
+			Kind: model.NetworkPersonal, CreatedAt: time.Now()}
+		if err := s.CreateNetwork(ctx, n); err != nil {
+			t.Fatalf("create password-less network: %v", err)
+		}
+		got, err := s.Network(ctx, "n-personal")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if len(got.PasswordHash) != 0 || len(got.PasswordSalt) != 0 {
+			t.Fatalf("personal network hash/salt = %v/%v, want empty", got.PasswordHash, got.PasswordSalt)
+		}
+		found, err := s.PersonalNetwork(ctx, "u-personal")
+		if err != nil || found.ID != "n-personal" {
+			t.Fatalf("personal lookup: %v %+v", err, found)
+		}
+	})
 	t.Run("network CRUD and name uniqueness", func(t *testing.T) {
 		s := newStore(t)
 		defer s.Close(ctx)
@@ -492,4 +513,37 @@ func TestMemStoreInboxContract(t *testing.T) {
 	if _, err = s.EnvelopeByID(ctx, "ch1", "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown id err = %v, want ErrNotFound", err)
 	}
+}
+
+// TestPostgresStoreContract runs the Store contract against real
+// Postgres — opt-in via FA_NETWORK_TEST_PG_URL (integration convention:
+// deterministic offline by default, database leg when the env points at
+// a throwaway instance). It exists because the memory store cannot
+// represent SQL-level constraints: the personal-network enroll 500
+// (nil password hash binding as NULL against NOT NULL, SQLSTATE 23502)
+// shipped green through the memory-only leg.
+func TestPostgresStoreContract(t *testing.T) {
+	url := os.Getenv("FA_NETWORK_TEST_PG_URL")
+	if url == "" {
+		t.Skip("FA_NETWORK_TEST_PG_URL not set; Postgres contract leg skipped")
+	}
+	ctx := context.Background()
+	ContractTest(t, func(t *testing.T) Store {
+		t.Helper()
+		s, err := NewPostgres(ctx, url)
+		if err != nil {
+			t.Fatalf("open postgres: %v", err)
+		}
+		t.Cleanup(func() { _ = s.Close(ctx) })
+		// Each contract subtest gets a physically fresh schema state:
+		// the contract relies on fixed row ids, so leftovers from a
+		// previous run or subtest would surface as bogus conflicts.
+		const reset = `TRUNCATE networks, members, channels, envelopes,
+			sessions, wakeups, dispatches, agent_drops, agent_owners,
+			channel_reads, devices`
+		if _, err := s.db.ExecContext(ctx, reset); err != nil {
+			t.Fatalf("truncate: %v", err)
+		}
+		return s
+	})
 }

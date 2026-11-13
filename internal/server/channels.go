@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -223,5 +224,9 @@ func writeStoreErr(w http.ResponseWriter, err error, conflictMsg string) {
 		writeError(w, http.StatusConflict, CodeConflict, conflictMsg)
 		return
 	}
+	// The 500 must not swallow the cause: log the underlying store error
+	// so prod incidents are diagnosable (contract "store error" text is
+	// deliberately generic for the client; the log carries the truth).
+	log.Printf("store error: %v", err)
 	writeError(w, http.StatusInternalServerError, "internal", "store error")
 }
