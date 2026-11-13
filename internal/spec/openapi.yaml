@@ -1075,9 +1075,13 @@ paths:
         JSON frames — `hello` (deviceId) → `hello_ok` (refId) + `roster`
         snapshot + redelivery of unacked `mail` in seq order; `ack`
         (refId = delivered msgId) after the local write; `ping`/`pong`
-        ~20s, half-open sockets dropped (~45s). `msgId` doubles as the
-        fanet1 frameId inside `ciphertext` — the server redelivers
-        byte-for-byte and never rewrites ids (contract v1.1 §3). One
+        ~20s, half-open sockets dropped (~45s). Server-origin frames
+        (`hello_ok`, `pong`, `roster`) carry their own `msgId` and `ts`
+        — envelope v1 clients reject any frame without a non-empty
+        `msgId`. `msgId` on delivered `mail` doubles as the fanet1
+        frameId inside `ciphertext` — the server redelivers
+        byte-for-byte and never rewrites mail ids (contract v1.1 §3).
+        One
         upstream socket per device; a second dial evicts the first.
         One socket
         per session; heartbeat every 30s (ghost presence cleanup beyond two

@@ -321,9 +321,9 @@ func (s *Server) deviceHandshake(ctx context.Context, conn *websocket.Conn, dc *
 		dc.markPong(s.cfg.Now())
 		switch f.Kind {
 		case kindPing:
-			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindPong, RefID: f.MsgID})
+			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindPong, MsgID: newToken(), RefID: f.MsgID, TS: s.cfg.Now().UTC().Format(time.RFC3339)})
 		case kindHello:
-			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindHelloOK, RefID: f.MsgID})
+			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindHelloOK, MsgID: newToken(), RefID: f.MsgID, TS: s.cfg.Now().UTC().Format(time.RFC3339)})
 			s.deviceRosterSnapshot(dc)
 			for _, mail := range box.Redeliver() {
 				s.deviceSend(dc, mail)
@@ -423,7 +423,7 @@ func (s *Server) deviceReadPump(ctx context.Context, conn *websocket.Conn, dc *d
 		dc.markPong(s.cfg.Now())
 		switch f.Kind {
 		case kindPing:
-			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindPong, RefID: f.MsgID})
+			s.deviceSend(dc, deviceFrame{V: 1, Kind: kindPong, MsgID: newToken(), RefID: f.MsgID, TS: s.cfg.Now().UTC().Format(time.RFC3339)})
 		case kindAck:
 			box.Ack(f.RefID)
 		case kindMail:

@@ -109,6 +109,13 @@ func (c *deviceWSClient) hello(deviceID string, wantRoster int) []deviceFrame {
 	if ok.RefID != "hello-1" {
 		c.t.Fatalf("hello_ok.refId = %q, want hello-1", ok.RefID)
 	}
+	// Envelope v1 client contract: msgId is mandatory on EVERY frame —
+	// a Dart envelope without it is rejected as malformed (which hung
+	// the connector handshake on server-origin frames, prod "stuck
+	// Connecting"). Server-origin control frames mint their own ids.
+	if ok.MsgID == "" || ok.TS == "" {
+		c.t.Fatalf("hello_ok must carry msgId+ts, got %+v", ok)
+	}
 	roster := make([]deviceFrame, 0, wantRoster)
 	for i := 0; i < wantRoster; i++ {
 		roster = append(roster, c.next("roster"))
@@ -135,10 +142,13 @@ func TestDeviceWSHandshakeRosterAndPing(t *testing.T) {
 		}
 	}
 
-	// ping/pong roundtrip with refId binding.
+	// ping/pong roundtrip with refId binding; pong is a server-origin
+	// frame and must mint its own msgId+ts (client envelope contract).
 	dc.send(deviceFrame{V: 1, Kind: "ping", MsgID: "p-1"})
 	if f := dc.next("pong"); f.RefID != "p-1" {
 		t.Fatalf("pong.refId = %q, want p-1", f.RefID)
+	} else if f.MsgID == "" || f.TS == "" {
+		t.Fatalf("pong must carry msgId+ts, got %+v", f)
 	}
 
 	// hello must precede everything: a bare ack before hello on a FRESH
