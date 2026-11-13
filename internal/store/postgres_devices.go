@@ -26,18 +26,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS devices_token_hash ON devices (token_hash)
   WHERE revoked_at IS NULL;
 `
 
-// pgDeviceAlter adds the network kind column (personal vs shared) to
-// databases created before the machine-connector contract.
+// pgDeviceAlter: idempotent additive migrations for databases created
+// before later contract phases (network kind; device friendly names).
 var pgDeviceAlter = []string{
 	`ALTER TABLE networks ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE devices ADD COLUMN IF NOT EXISTS friendly_name TEXT NOT NULL DEFAULT ''`,
 }
 
 // CreateDevice implements Devices.
 func (p *PGStore) CreateDevice(ctx context.Context, d *model.Device) error {
 	_, err := p.db.ExecContext(ctx,
-		`INSERT INTO devices (id, user_id, name, token_hash, created_at)
-		 VALUES ($1,$2,$3,$4,$5)`,
-		d.ID, d.UserID, d.Name, d.TokenHash, d.CreatedAt.UTC())
+		`INSERT INTO devices (id, user_id, name, friendly_name, token_hash, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6)`,
+		d.ID, d.UserID, d.Name, d.FriendlyName, d.TokenHash, d.CreatedAt.UTC())
 	return mapErr(err)
 }
 
@@ -45,21 +46,21 @@ func (p *PGStore) CreateDevice(ctx context.Context, d *model.Device) error {
 // only need auth use DeviceByTokenHash, which filters them).
 func (p *PGStore) Device(ctx context.Context, deviceID string) (*model.Device, error) {
 	return pgScanDevice(p.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, revoked_at
+		`SELECT id, user_id, name, friendly_name, token_hash, created_at, revoked_at
 		 FROM devices WHERE id = $1`, deviceID))
 }
 
 // DeviceByTokenHash implements Devices: revocation == deletion for auth.
 func (p *PGStore) DeviceByTokenHash(ctx context.Context, hash []byte) (*model.Device, error) {
 	return pgScanDevice(p.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, revoked_at
+		`SELECT id, user_id, name, friendly_name, token_hash, created_at, revoked_at
 		 FROM devices WHERE token_hash = $1 AND revoked_at IS NULL`, hash))
 }
 
 // DevicesOfUser implements Devices.
 func (p *PGStore) DevicesOfUser(ctx context.Context, userID string) ([]*model.Device, error) {
 	rows, err := p.db.QueryContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, revoked_at
+		`SELECT id, user_id, name, friendly_name, token_hash, created_at, revoked_at
 		 FROM devices WHERE user_id = $1 ORDER BY created_at, id`, userID)
 	if err != nil {
 		return nil, mapErr(err)
@@ -94,6 +95,21 @@ func (p *PGStore) RevokeDevice(ctx context.Context, deviceID string, at time.Tim
 	return nil
 }
 
+// RenameDevice implements Devices: account-scoped by user_id in the
+// WHERE clause — a foreign or revoked device matches zero rows.
+func (p *PGStore) RenameDevice(ctx context.Context, userID, deviceID, name string) error {
+	res, err := p.db.ExecContext(ctx,
+		`UPDATE devices SET friendly_name = $3 WHERE id = $2 AND user_id = $1 AND revoked_at IS NULL`,
+		userID, deviceID, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notFound("device", deviceID)
+	}
+	return nil
+}
+
 // PersonalNetwork implements Networks.
 func (p *PGStore) PersonalNetwork(ctx context.Context, userID string) (*model.Network, error) {
 	return p.scanNetwork(p.db.QueryRowContext(ctx,
@@ -104,7 +120,7 @@ func (p *PGStore) PersonalNetwork(ctx context.Context, userID string) (*model.Ne
 func pgScanDevice(row interface{ Scan(...any) error }) (*model.Device, error) {
 	var d model.Device
 	var revoked sql.NullTime
-	err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.TokenHash, &d.CreatedAt, &revoked)
+	err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.FriendlyName, &d.TokenHash, &d.CreatedAt, &revoked)
 	if err != nil {
 		return nil, mapErr(err)
 	}

@@ -89,6 +89,17 @@ func (r *deviceRegistry) ofUser(userID string) []*model.Device {
 	return out
 }
 
+func (r *deviceRegistry) rename(id, userID, name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.byID[id]
+	if !ok || d.UserID != userID || d.RevokedAt != nil {
+		return false
+	}
+	d.FriendlyName = name
+	return true
+}
+
 func (r *deviceRegistry) revoke(id string, at time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -145,6 +156,16 @@ func (m *MemStore) DevicesOfUser(_ context.Context, userID string) ([]*model.Dev
 // RevokeDevice implements Devices.
 func (m *MemStore) RevokeDevice(_ context.Context, deviceID string, at time.Time) error {
 	if !m.devices.revoke(deviceID, at) {
+		return notFound("device", deviceID)
+	}
+	return nil
+}
+
+// RenameDevice implements Devices (account-scoped, see interface).
+func (m *MemStore) RenameDevice(_ context.Context, userID, deviceID, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.devices.rename(deviceID, userID, name) {
 		return notFound("device", deviceID)
 	}
 	return nil

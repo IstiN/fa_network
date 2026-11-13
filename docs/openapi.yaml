@@ -867,6 +867,98 @@ paths:
         '429':
           $ref: '#/components/responses/Throttled'
 
+  /api/devices:
+    get:
+      tags: [devices]
+      summary: List the account's own connector devices
+      description: |
+        The enrolled machines of the authenticated user, oldest first
+        (UI device lists; rename targets). Token hashes and raw device
+        tokens never appear. Auth: ai-native JWT.
+      security:
+        - authJwt: []
+      responses:
+        '200':
+          description: Account device list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      required: [deviceId, name, createdAt]
+                      properties:
+                        deviceId: { type: string }
+                        name:
+                          type: string
+                          description: Host display name captured at enroll.
+                        friendlyName:
+                          type: string
+                          maxLength: 64
+                          description: Owner-set friendly name (absent when unset).
+                        createdAt: { type: string, format: date-time }
+                        revokedAt:
+                          type: string
+                          format: date-time
+                          description: Present when the device was revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/devices/{deviceId}/name:
+    patch:
+      tags: [devices]
+      summary: Set/clear the device's friendly display name (account-scoped)
+      description: |
+        Machine-connector contract §10: the owner account names its own
+        machine; the friendly name reaches the account device list and
+        the network machine roster (`friendlyName`, omitted when unset —
+        additive, older clients ignore it). `{name: ""}` clears. Only
+        the account JWT may rename (device tokens cannot rename). A
+        foreign, revoked, or unknown id reads as 404 — no existence
+        oracle.
+      security:
+        - authJwt: []
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 64
+                  description: Friendly name (rune-counted); empty clears.
+      responses:
+        '200':
+          description: Renamed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deviceId: { type: string }
+                  friendlyName: { type: string }
+        '400':
+          description: Malformed body or name longer than 64 runes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/devices/{deviceId}/roster:
     patch:
       tags: [devices]
@@ -963,9 +1055,11 @@ paths:
         each with its machine presence (online / degraded / offline —
         server-inferred, truth = server receive time), exposed agents
         (with dmPub) and sessions exposed to THIS network. Read for
-        every member (showcase rule). Exposure filtering is the
-        deny-by-default boundary: a fresh device in a shared network
-        publishes zero sessions until the owner opts in per network.
+        every member (showcase rule). Each entry carries the owner-set
+        `friendlyName` when present (additive; §10 rename flow). Exposure
+        filtering is the deny-by-default boundary: a fresh device in a
+        shared network publishes zero sessions until the owner opts in
+        per network.
       security:
         - sessionToken: []
         - authJwt: []
@@ -991,6 +1085,10 @@ paths:
                       required: [deviceId, name, presence, userId]
                       properties:
                         deviceId: { type: string }
+                        friendlyName:
+                          type: string
+                          maxLength: 64
+                          description: Owner-set friendly display name (absent when unset).
                         name: { type: string }
                         presence: { type: string, enum: [online, degraded, offline] }
                         userId: { type: string }

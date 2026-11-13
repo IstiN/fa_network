@@ -145,6 +145,76 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	s.revoke(w, r, deviceID)
 }
 
+// deviceFriendlyNameLimit bounds friendly names (owner UX, contract
+// §10): rune-counted so CJK names are not silently truncated mid-char.
+const deviceFriendlyNameLimit = 64
+
+// renameDevice implements PATCH /api/devices/{deviceId}/name: the
+// account sets/clears its own device's friendly display name. Auth:
+// ai-native JWT only (management route — device tokens cannot rename).
+// {name: ""} clears; >64 runes → 400; foreign/revoked/unknown → 404
+// (no existence oracle).
+func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
+	principal := s.requireAuthed(w, r)
+	if principal == nil {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "invalid rename body")
+		return
+	}
+	if len([]rune(req.Name)) > deviceFriendlyNameLimit {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "friendly name too long")
+		return
+	}
+	deviceID := r.PathValue("deviceId")
+	if err := s.st.RenameDevice(r.Context(), principal.UserID, deviceID, req.Name); err != nil {
+		if store.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "no such device")
+			return
+		}
+		writeStoreErr(w, err, "device")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deviceId": deviceID, "friendlyName": req.Name})
+}
+
+// deviceWire is one account device as seen by its owner (GET
+// /api/devices): machine name + friendly display name. Token hashes and
+// raw tokens never appear.
+type deviceWire struct {
+	DeviceID     string     `json:"deviceId"`
+	Name         string     `json:"name"`
+	FriendlyName string     `json:"friendlyName,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
+}
+
+// listAccountDevices implements GET /api/devices: the caller's own
+// enrolled machines, oldest first (UI device lists + rename targets).
+func (s *Server) listAccountDevices(w http.ResponseWriter, r *http.Request) {
+	principal := s.requireAuthed(w, r)
+	if principal == nil {
+		return
+	}
+	devices, err := s.st.DevicesOfUser(r.Context(), principal.UserID)
+	if err != nil {
+		writeStoreErr(w, err, "device")
+		return
+	}
+	out := make([]deviceWire, 0, len(devices))
+	for _, d := range devices {
+		out = append(out, deviceWire{
+			DeviceID: d.ID, Name: d.Name, FriendlyName: d.FriendlyName,
+			CreatedAt: d.CreatedAt.UTC(), RevokedAt: d.RevokedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+}
+
 // revoke performs the shared revocation tail (store + socket kick).
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request, deviceID string) {
 	if err := s.st.RevokeDevice(r.Context(), deviceID, s.cfg.Now()); err != nil {

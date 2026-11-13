@@ -94,7 +94,6 @@ func TestJoinTwoClassesACB2(t *testing.T) {
 	}
 }
 
-
 // §2 auth-first re-entry: an existing member rejoins by JWT alone — the
 // network password is a first-admission credential, demanded again only
 // once the membership row is gone (kick). Guests and the password-path
@@ -182,6 +181,7 @@ func TestJoinAuthFirstRentry(t *testing.T) {
 		t.Fatalf("guest identity = %v", out["identity"])
 	}
 }
+
 // AC-B3: management routes reject guest tokens (and unauthenticated
 // callers); no management route accepts one.
 func TestManagementRejectsGuestsACB3(t *testing.T) {

@@ -124,12 +124,13 @@ type Envelope struct {
 // the token itself is returned once at enroll and never stored —
 // credential hygiene matches the relay-only posture.
 type Device struct {
-	ID        string
-	UserID    string
-	Name      string
-	TokenHash []byte
-	CreatedAt time.Time
-	RevokedAt *time.Time
+	ID           string
+	UserID       string
+	Name         string
+	FriendlyName string // owner-set display name ('' = unset)
+	TokenHash    []byte
+	CreatedAt    time.Time
+	RevokedAt    *time.Time
 }
 
 // Session is a browser session token issued by join (memory only, E7).

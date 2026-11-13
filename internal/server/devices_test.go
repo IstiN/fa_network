@@ -2,6 +2,8 @@ package server
 
 import (
 	"testing"
+
+	"github.com/IstiN/fa_network/internal/model"
 )
 
 // deviceEnrollBody is the enroll response shape.
@@ -150,5 +152,91 @@ func TestDeviceTokenNeverStoredRaw(t *testing.T) {
 	}
 	if string(stored.TokenHash) == dev.DeviceToken {
 		t.Fatal("raw deviceToken stored as the hash")
+	}
+}
+
+// TestDeviceFriendlyName covers the owner-visible rename flow (contract
+// §10): account JWT renames its own device, the name reaches the
+// account device list and the network machine roster; foreign ids are
+// invisible (404), oversized names are rejected, empty clears.
+func TestDeviceFriendlyName(t *testing.T) {
+	env := newTestEnv(t)
+	jwt := env.authedToken("alice", "Alice")
+	dev := enrollDevice(t, env, jwt, "macbook")
+
+	// Rename own device.
+	rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/name",
+		map[string]any{"name": "MacBook Pro Uladzimir"}, jwt)
+	if rec.Code != 200 {
+		t.Fatalf("rename status = %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Account device list carries it.
+	rec = env.do("GET", "/api/devices", nil, jwt)
+	if rec.Code != 200 {
+		t.Fatalf("list status = %d", rec.Code)
+	}
+	var list struct {
+		Devices []deviceWire `json:"devices"`
+	}
+	decodeBody(t, rec, &list)
+	if len(list.Devices) != 1 || list.Devices[0].FriendlyName != "MacBook Pro Uladzimir" {
+		t.Fatalf("device list = %+v", list.Devices)
+	}
+
+	// Network machine roster carries it (E2E visibility).
+	nets := env.do("GET", "/api/networks/mine", nil, jwt)
+	var mine struct {
+		Items []model.AccountNetworkWire `json:"items"`
+	}
+	decodeBody(t, nets, &mine)
+	if len(mine.Items) == 0 {
+		t.Fatal("enroll must auto-provision the personal network")
+	}
+	rec = env.do("GET", "/api/networks/"+mine.Items[0].ID+"/devices", nil, jwt)
+	if rec.Code != 200 {
+		t.Fatalf("roster status = %d", rec.Code)
+	}
+	var roster struct {
+		Devices []networkDeviceRosterWire `json:"devices"`
+	}
+	decodeBody(t, rec, &roster)
+	if len(roster.Devices) != 1 || roster.Devices[0].FriendlyName != "MacBook Pro Uladzimir" {
+		t.Fatalf("machine roster = %+v", roster.Devices)
+	}
+
+	// Foreign device id reads as missing (no existence oracle).
+	bob := env.authedToken("bob", "Bob")
+	if rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/name",
+		map[string]any{"name": "stolen"}, bob); rec.Code != 404 {
+		t.Fatalf("foreign rename status = %d, want 404", rec.Code)
+	}
+
+	// Oversized (rune-counted) and garbage bodies are 400.
+	long := make([]rune, deviceFriendlyNameLimit+1)
+	for i := range long {
+		long[i] = 'ж'
+	}
+	if rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/name",
+		map[string]any{"name": string(long)}, jwt); rec.Code != 400 {
+		t.Fatalf("oversized rename status = %d, want 400", rec.Code)
+	}
+
+	// Empty name clears; unauthenticated is 401.
+	if rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/name",
+		map[string]any{"name": ""}, jwt); rec.Code != 200 {
+		t.Fatalf("clear rename status = %d", rec.Code)
+	}
+	if rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/name",
+		map[string]any{"name": "x"}, ""); rec.Code != 401 {
+		t.Fatalf("unauth rename status = %d, want 401", rec.Code)
+	}
+	rec = env.do("GET", "/api/devices", nil, jwt)
+	var after struct {
+		Devices []deviceWire `json:"devices"`
+	}
+	decodeBody(t, rec, &after)
+	if len(after.Devices) != 1 || after.Devices[0].FriendlyName != "" {
+		t.Fatalf("clear failed: %+v", after.Devices)
 	}
 }

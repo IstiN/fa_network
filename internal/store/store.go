@@ -54,6 +54,10 @@ type Devices interface {
 	// resolve to ErrNotFound (revocation == deletion for auth).
 	DeviceByTokenHash(ctx context.Context, hash []byte) (*model.Device, error)
 	DevicesOfUser(ctx context.Context, userID string) ([]*model.Device, error)
+	// RenameDevice sets the account-scoped friendly display name
+	// (owner UX; '' clears). ErrNotFound when the device is unknown,
+	// revoked, or not owned by userID — a foreign id is invisible.
+	RenameDevice(ctx context.Context, userID, deviceID, name string) error
 	// RevokeDevice stamps revocation: live sockets are kicked and
 	// future ticket mints/redeems rejected.
 	RevokeDevice(ctx context.Context, deviceID string, at time.Time) error

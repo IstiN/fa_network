@@ -53,12 +53,15 @@ func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 
 // networkDeviceRosterWire is one device's exposed-only roster entry.
 type networkDeviceRosterWire struct {
-	DeviceID string              `json:"deviceId"`
-	Name     string              `json:"name"`
-	Presence string              `json:"presence"`
-	UserID   string              `json:"userId"`
-	Agents   []deviceAgentWire   `json:"agents,omitempty"`
-	Sessions []deviceSessionWire `json:"sessions,omitempty"`
+	DeviceID string `json:"deviceId"`
+	Name     string `json:"name"`
+	// FriendlyName is the owner-set display name ('' omitted — additive,
+	// older clients ignore unknown fields).
+	FriendlyName string              `json:"friendlyName,omitempty"`
+	Presence     string              `json:"presence"`
+	UserID       string              `json:"userId"`
+	Agents       []deviceAgentWire   `json:"agents,omitempty"`
+	Sessions     []deviceSessionWire `json:"sessions,omitempty"`
 }
 
 // listNetworkDevices implements GET /api/networks/{id}/devices: the
@@ -86,8 +89,8 @@ func (s *Server) listNetworkDevices(w http.ResponseWriter, r *http.Request) {
 		for _, d := range devices {
 			machine, agents, sessions := s.deviceExposure.Roster(d.ID, networkID)
 			out = append(out, networkDeviceRosterWire{
-				DeviceID: d.ID, Name: d.Name, UserID: d.UserID,
-				Presence: machine, Agents: agents, Sessions: sessions,
+				DeviceID: d.ID, Name: d.Name, FriendlyName: d.FriendlyName,
+				UserID: d.UserID, Presence: machine, Agents: agents, Sessions: sessions,
 			})
 		}
 	}

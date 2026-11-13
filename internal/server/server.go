@@ -125,6 +125,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/devices/enroll", s.enrollDevice)
 	mux.HandleFunc("DELETE /api/devices/{deviceId}", s.revokeDevice)
 	mux.HandleFunc("PATCH /api/devices/{deviceId}/roster", s.patchDeviceRoster)
+	mux.HandleFunc("PATCH /api/devices/{deviceId}/name", s.renameDevice)
+	mux.HandleFunc("GET /api/devices", s.listAccountDevices)
 	mux.HandleFunc("GET /api/networks/{networkId}/devices", s.listNetworkDevices)
 	mux.HandleFunc("POST /api/dev/login", s.devLogin) // mock provider only, 404 in prod
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
