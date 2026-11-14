@@ -197,7 +197,7 @@ func (s *Server) devicePresenceLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.deviceExposure.SweeperTick(s.cfg.Now())
+			s.sweeperOfflineFanout(s.deviceExposure.SweeperTick(s.cfg.Now()))
 		}
 	}
 }

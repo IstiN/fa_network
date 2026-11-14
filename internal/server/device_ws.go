@@ -46,6 +46,10 @@ type deviceFrame struct {
 	// roster-only: public directory entries (names/presence/classes —
 	// never message content), plaintext like the member-WS roster.
 	Entries []model.MemberWire `json:"entries,omitempty"`
+	// Machines: roster snapshot + presence-flip entries (contract §4/§5
+	// — deviceId/name/friendlyName/machine presence + exposed
+	// agents/sessions; same shape as the network machine roster).
+	Devices []networkDeviceRosterWire `json:"devices,omitempty"`
 	// presence-only (§5): agent states + exposed session leases riding
 	// inside the machine presence frame.
 	Agents   []deviceAgentWire   `json:"agents,omitempty"`
@@ -266,7 +270,7 @@ func (s *Server) serveDeviceWS(w http.ResponseWriter, r *http.Request, deviceTok
 	}
 	s.deviceConns.Add(dc)
 	box := s.deviceMail.of(device.ID)
-	s.deviceExposure.SetMachine(device.ID, MachineOnline, s.cfg.Now())
+	s.setMachineAndFanout(device, MachineOnline)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -274,7 +278,7 @@ func (s *Server) serveDeviceWS(w http.ResponseWriter, r *http.Request, deviceTok
 	go s.deviceWriteLoop(ctx, conn, dc, box)
 
 	if !s.deviceHandshake(ctx, conn, dc, box) {
-		s.deviceExposure.SetMachine(device.ID, MachineOffline, s.cfg.Now())
+		s.setMachineAndFanout(device, MachineOffline)
 		dc.closeConn()
 		<-writeDone
 		return
@@ -287,9 +291,9 @@ func (s *Server) serveDeviceWS(w http.ResponseWriter, r *http.Request, deviceTok
 	// drop (network gone, process killed) opens the degraded grace
 	// window — local agents keep working while it runs.
 	if isCleanWSClose(readPumpErr) {
-		s.deviceExposure.SetMachine(device.ID, MachineOffline, s.cfg.Now())
+		s.setMachineAndFanout(device, MachineOffline)
 	} else {
-		s.deviceExposure.SetMachine(device.ID, MachineDegraded, s.cfg.Now())
+		s.setMachineAndFanout(device, MachineDegraded)
 	}
 	<-writeDone
 }
@@ -354,6 +358,7 @@ func (s *Server) deviceRosterSnapshot(dc *deviceConn) {
 			V: 1, Kind: kindRoster, MsgID: newToken(),
 			Network: an.Network.ID, TS: s.cfg.Now().UTC().Format(time.RFC3339),
 			Entries: entries,
+			Devices: s.snapshotDeviceMachines(ctx, an.Network.ID),
 		})
 	}
 }

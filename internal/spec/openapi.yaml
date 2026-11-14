@@ -1173,12 +1173,24 @@ paths:
         JSON frames — `hello` (deviceId) → `hello_ok` (refId) + `roster`
         snapshot + redelivery of unacked `mail` in seq order; `ack`
         (refId = delivered msgId) after the local write; `ping`/`pong`
-        ~20s, half-open sockets dropped (~45s). Server-origin frames
-        (`hello_ok`, `pong`, `roster`) carry their own `msgId` and `ts`
-        — envelope v1 clients reject any frame without a non-empty
-        `msgId`. `msgId` on delivered `mail` doubles as the fanet1
-        frameId inside `ciphertext` — the server redelivers
-        byte-for-byte and never rewrites mail ids (contract v1.1 §3).
+        ~20s, half-open sockets dropped (~45s). The `roster` snapshot
+        carries BOTH the network's member directory (`entries`) AND its
+        machine roster (`devices`: deviceId/name/friendlyName/machine
+        presence + exposed agents + sessions exposed to that network —
+        REST parity with `GET /api/networks/{id}/devices`, self
+        included). Machine-state flips (online/degraded/offline) are
+        pushed incrementally as `presence` frames (same `devices[]`
+        shape, `network` = a shared network) to every live sibling
+        socket of that network. A connector may push its own
+        agent/session projection as a `presence` frame (top-level
+        `agents`/`sessions`, same schema as the roster PATCH — merge
+        semantics; retract explicitly with `offline`/`exposed:false`).
+        Server-origin frames (`hello_ok`, `pong`, `roster`) carry their
+        own `msgId` and `ts` — envelope v1 clients reject any frame
+        without a non-empty `msgId`. `msgId` on delivered `mail`
+        doubles as the fanet1 frameId inside `ciphertext` — the server
+        redelivers byte-for-byte and never rewrites mail ids (contract
+        v1.1 §3).
         One
         upstream socket per device; a second dial evicts the first.
         One socket

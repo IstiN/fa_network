@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+
+	"github.com/IstiN/fa_network/internal/model"
 )
 
 // Roster patch + network device roster (machine-connector contract §9).
@@ -80,9 +83,18 @@ func (s *Server) listNetworkDevices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": s.machineRosterOf(r.Context(), networkID, members)})
+}
+
+// machineRosterOf builds the network's machine roster (the read model
+// behind both GET /api/networks/{id}/devices and the device-WS roster
+// snapshot): every member user's enrolled devices with server-inferred
+// machine presence and their exposed agents / sessions exposed to THIS
+// network.
+func (s *Server) machineRosterOf(ctx context.Context, networkID string, members []*model.Member) []networkDeviceRosterWire {
 	out := make([]networkDeviceRosterWire, 0, 4)
 	for _, m := range members {
-		devices, err := s.st.DevicesOfUser(r.Context(), m.ID)
+		devices, err := s.st.DevicesOfUser(ctx, m.ID)
 		if err != nil {
 			continue
 		}
@@ -94,5 +106,5 @@ func (s *Server) listNetworkDevices(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+	return out
 }
