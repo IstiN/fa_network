@@ -27,6 +27,10 @@ type envelopeInput struct {
 // (showcase browsing); every other anonymous case is the generic 404 so
 // no channel existence or class leaks (E1).
 func (s *Server) getMessages(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.PathValue("channelId"), "dm:") {
+		s.serveDMMessages(w, r, r.PathValue("channelId"))
+		return
+	}
 	channel := s.loadChannel(w, r)
 	if channel == nil {
 		return

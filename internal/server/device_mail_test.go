@@ -114,9 +114,9 @@ func TestDeviceMailStructuralNegatives(t *testing.T) {
 		{"foreign device address in from", deviceFrame{Kind: "mail", MsgID: "m5",
 			Network: dev.PersonalNetwork.ID, Channel: channelID,
 			From: "user:bob", Ciphertext: "x"}, "sender_not_exposed"},
-		{"DM routing until phase C", deviceFrame{Kind: "mail", MsgID: "m6",
+		{"DM unknown target device", deviceFrame{Kind: "mail", MsgID: "m6",
 			Network: dev.PersonalNetwork.ID, Channel: "dm:user:alice:gb@mac",
-			From: "user:alice", Ciphertext: "x"}, "dm_not_routed_yet"},
+			From: "user:alice", Ciphertext: "x"}, "unknown_device"},
 	}
 	for _, tc := range cases {
 		dc.send(tc.f)

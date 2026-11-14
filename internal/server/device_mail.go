@@ -65,9 +65,7 @@ func (s *Server) deviceMailRoute(ctx context.Context, dc *deviceConn, f deviceFr
 		return
 	}
 	if strings.HasPrefix(f.Channel, "dm:") {
-		// DM routing lands with phase C (§7); reject structurally so the
-		// connector never assumes a silent drop.
-		s.deviceMailErr(dc, f.MsgID, "dm_not_routed_yet")
+		s.deviceDMRoute(ctx, dc, f)
 		return
 	}
 	channel, from, code := s.mailTarget(ctx, dc, f)

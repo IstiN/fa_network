@@ -159,6 +159,14 @@ func (r *DeviceRegistry) OfUsers(userIDs []string) []*deviceConn {
 	return out
 }
 
+// OfDevice returns the live socket of one device (nil when offline) —
+// DM fanout targets the dm device directly.
+func (r *DeviceRegistry) OfDevice(deviceID string) *deviceConn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cons[deviceID]
+}
+
 // All returns every live device socket (sweeper broadcasts).
 func (r *DeviceRegistry) All() []*deviceConn {
 	r.mu.Lock()
