@@ -127,6 +127,7 @@ type Device struct {
 	ID           string
 	UserID       string
 	Name         string
+	Platform     string // client-declared host platform ('' unknown)
 	FriendlyName string // owner-set display name ('' = unset)
 	TokenHash    []byte
 	CreatedAt    time.Time

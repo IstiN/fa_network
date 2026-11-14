@@ -27,6 +27,13 @@ type rosterPatch struct {
 // device's own deviceToken or the owner's JWT.
 func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceId")
+	// Chunked projection pushes (clients split large session lists) are
+	// bounded per device, not per user: a compromised token cannot
+	// churn the projection store faster than this.
+	if !s.limiter.Allow("roster-patch|"+deviceID, deviceRosterPatchRateN, deviceRosterPatchRatePer) {
+		writeError(w, http.StatusTooManyRequests, CodeThrottled, "too many roster patches")
+		return
+	}
 	if device := s.deviceByToken(r.Context(), bearerToken(r)); device != nil {
 		if device.ID != deviceID {
 			writeError(w, http.StatusForbidden, CodeForbiddenClass, "device token patches only itself")
@@ -58,8 +65,9 @@ func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 type networkDeviceRosterWire struct {
 	DeviceID string `json:"deviceId"`
 	Name     string `json:"name"`
-	// FriendlyName is the owner-set display name ('' omitted — additive,
-	// older clients ignore unknown fields).
+	// Platform and FriendlyName are display metadata ('' omitted —
+	// additive, older clients ignore unknown fields).
+	Platform     string              `json:"platform,omitempty"`
 	FriendlyName string              `json:"friendlyName,omitempty"`
 	Presence     string              `json:"presence"`
 	UserID       string              `json:"userId"`
@@ -101,8 +109,9 @@ func (s *Server) machineRosterOf(ctx context.Context, networkID string, members 
 		for _, d := range devices {
 			machine, agents, sessions := s.deviceExposure.Roster(d.ID, networkID)
 			out = append(out, networkDeviceRosterWire{
-				DeviceID: d.ID, Name: d.Name, FriendlyName: d.FriendlyName,
-				UserID: d.UserID, Presence: machine, Agents: agents, Sessions: sessions,
+				DeviceID: d.ID, Name: d.Name, Platform: d.Platform,
+				FriendlyName: d.FriendlyName,
+				UserID:       d.UserID, Presence: machine, Agents: agents, Sessions: sessions,
 			})
 		}
 	}

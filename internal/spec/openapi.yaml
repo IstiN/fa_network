@@ -847,6 +847,10 @@ paths:
                   type: string
                   maxLength: 128
                   description: Optional display name of the host.
+                platform:
+                  type: string
+                  maxLength: 32
+                  description: Client-declared host platform tag (e.g. `darwin-arm64`, `android`).
       responses:
         '201':
           description: Device enrolled; personal network present.
@@ -859,6 +863,9 @@ paths:
                   deviceId:
                     type: string
                     description: Stable UUID — keep it in the device key store.
+                  platform:
+                    type: string
+                    description: Echoed platform tag.
                   deviceToken:
                     type: string
                     description: |
@@ -900,6 +907,9 @@ paths:
                         name:
                           type: string
                           description: Host display name captured at enroll.
+                        platform:
+                          type: string
+                          description: Client-declared platform tag (absent when not declared).
                         friendlyName:
                           type: string
                           maxLength: 64
@@ -974,8 +984,11 @@ paths:
         network roster read model serves. Agents carry one exposure flag
         (plus dmPub — public directory material); sessions carry their
         own per-network exposure lists (personal default ON, shared
-        networks default OFF — owner decision §0.2). Auth: the device's
-        own deviceToken or the owner's JWT.
+        networks default OFF — owner decision §0.2). Patches merge by
+        agent name / session id — absent entries persist; retract
+        explicitly (`state: "offline"`, `exposed: false`). Rate limit:
+        60 patches/min per device (chunked projection pushes fit).
+        Auth: the device's own deviceToken or the owner's JWT.
       security:
         - authJwt: []
         - deviceToken: []
@@ -1015,6 +1028,11 @@ paths:
                         type: array
                         items: { type: string }
                         description: Networks the session is exposed to.
+                      title: { type: string, description: Connector-declared display title (passthrough, in-memory projection). }
+                      path: { type: string, description: Connector-declared path (passthrough, in-memory projection). }
+                      lastActivity:
+                        type: string
+                        description: Connector-clock RFC3339 activity stamp (passthrough — presence truth stays server receive time).
       responses:
         '200':
           description: Projection updated.
@@ -1090,6 +1108,9 @@ paths:
                       required: [deviceId, name, presence, userId]
                       properties:
                         deviceId: { type: string }
+                        platform:
+                          type: string
+                          description: Client-declared platform tag (absent when not declared).
                         friendlyName:
                           type: string
                           maxLength: 64

@@ -52,11 +52,17 @@ type deviceAgentWire struct {
 
 // deviceSessionWire is one session entry. Exposure is per NETWORK
 // (contract §6: personal default ON, shared default OFF for sessions);
-// the connector lists the networks it exposes the session to.
+// the connector lists the networks it exposes the session to. Title/
+// path/lastActivity are connector-declared display metadata — passed
+// through into the in-memory projection (lost on restart until the
+// connector re-pushes, like all exposure flags).
 type deviceSessionWire struct {
-	ID       string   `json:"id"`
-	State    string   `json:"state"` // live | wake-on-DM | offline
-	Networks []string `json:"networks,omitempty"`
+	ID           string   `json:"id"`
+	State        string   `json:"state"` // live | wake-on-DM | offline
+	Networks     []string `json:"networks,omitempty"`
+	Title        string   `json:"title,omitempty"`
+	Path         string   `json:"path,omitempty"`
+	LastActivity string   `json:"lastActivity,omitempty"` // RFC3339, connector clock
 }
 
 // deviceState is one device's projection.

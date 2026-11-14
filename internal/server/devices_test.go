@@ -10,6 +10,7 @@ import (
 type deviceEnrollBody struct {
 	DeviceID        string           `json:"deviceId"`
 	DeviceToken     string           `json:"deviceToken"`
+	Platform        string           `json:"platform"`
 	PersonalNetwork *networkWireView `json:"personalNetwork"`
 }
 
@@ -152,6 +153,75 @@ func TestDeviceTokenNeverStoredRaw(t *testing.T) {
 	}
 	if string(stored.TokenHash) == dev.DeviceToken {
 		t.Fatal("raw deviceToken stored as the hash")
+	}
+}
+
+// TestDevicePlatformAndRosterPatchLimit: the client-declared platform
+// rides enroll → device list → machine roster; the roster PATCH is
+// rate-limited per device (chunked projection pushes must fit).
+func TestDevicePlatformAndRosterPatchLimit(t *testing.T) {
+	env := newTestEnv(t)
+	jwt := env.authedToken("alice", "Alice")
+	body := map[string]any{"name": "macbook", "platform": "darwin-arm64"}
+	rec := env.do("POST", "/api/devices/enroll", body, jwt)
+	if rec.Code != 201 {
+		t.Fatalf("enroll status = %d body %s", rec.Code, rec.Body.String())
+	}
+	var enrolled deviceEnrollBody
+	decodeBody(t, rec, &enrolled)
+	if enrolled.Platform != "darwin-arm64" {
+		t.Fatalf("enroll platform = %q", enrolled.Platform)
+	}
+
+	var list struct {
+		Devices []deviceWire `json:"devices"`
+	}
+	decodeBody(t, env.do("GET", "/api/devices", nil, jwt), &list)
+	if list.Devices[0].Platform != "darwin-arm64" {
+		t.Fatalf("list platform = %q", list.Devices[0].Platform)
+	}
+
+	// Oversized platform → 400.
+	long := make([]rune, devicePlatformLimit+1)
+	for i := range long {
+		long[i] = 'x'
+	}
+	if rec := env.do("POST", "/api/devices/enroll", map[string]any{"platform": string(long)}, jwt); rec.Code != 400 {
+		t.Fatalf("oversized platform status = %d, want 400", rec.Code)
+	}
+
+	// Roster PATCH budget: well under the limit works; the limit is
+	// per device. Push deviceRosterPatchRateN patches rapidly.
+	var mine struct {
+		Items []model.AccountNetworkWire `json:"items"`
+	}
+	decodeBody(t, env.do("GET", "/api/networks/mine", nil, jwt), &mine)
+	netID := mine.Items[0].ID
+	code := 0
+	for i := 0; i < deviceRosterPatchRateN; i++ {
+		code = env.do("PATCH", "/api/devices/"+enrolled.DeviceID+"/roster",
+			map[string]any{"sessions": []map[string]any{
+				{"id": "s", "state": "live", "networks": []string{netID},
+					"title": "T", "path": "/p", "lastActivity": "2026-11-13T22:00:00Z"},
+			}}, jwt).Code
+	}
+	if code != 200 {
+		t.Fatalf("patch #%d status = %d", deviceRosterPatchRateN, code)
+	}
+	if rec := env.do("PATCH", "/api/devices/"+enrolled.DeviceID+"/roster",
+		map[string]any{"sessions": []map[string]any{}}, jwt); rec.Code != 429 {
+		t.Fatalf("over-budget patch status = %d, want 429", rec.Code)
+	}
+
+	// Session display metadata survives into the projection.
+	rec = env.do("GET", "/api/networks/"+netID+"/devices", nil, jwt)
+	var roster struct {
+		Devices []networkDeviceRosterWire `json:"devices"`
+	}
+	decodeBody(t, rec, &roster)
+	ses := roster.Devices[0].Sessions
+	if len(ses) != 1 || ses[0].Title != "T" || ses[0].Path != "/p" || ses[0].LastActivity != "2026-11-13T22:00:00Z" {
+		t.Fatalf("session metadata = %+v", ses)
 	}
 }
 

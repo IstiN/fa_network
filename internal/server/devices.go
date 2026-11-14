@@ -24,7 +24,8 @@ const deviceEnrollRatePer = time.Minute
 
 // deviceEnrollRequest carries an optional display name for the host.
 type deviceEnrollRequest struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
 }
 
 // enrollDevice implements POST /api/devices/enroll: ai-native JWT in,
@@ -47,6 +48,10 @@ func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "device name too long")
 		return
 	}
+	if len([]rune(req.Platform)) > devicePlatformLimit {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "platform too long")
+		return
+	}
 
 	network, err := s.personalNetworkOf(r, principal)
 	if err != nil {
@@ -60,6 +65,7 @@ func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		ID:        newToken(),
 		UserID:    principal.UserID,
 		Name:      deviceNameOr(req.Name),
+		Platform:  req.Platform,
 		TokenHash: hash[:],
 		CreatedAt: s.cfg.Now(),
 	}
@@ -71,6 +77,7 @@ func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		"deviceId":        device.ID,
 		"deviceToken":     token,
 		"personalNetwork": model.NetworkWireOf(network),
+		"platform":        device.Platform,
 	})
 }
 
@@ -149,6 +156,17 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 // §10): rune-counted so CJK names are not silently truncated mid-char.
 const deviceFriendlyNameLimit = 64
 
+// devicePlatformLimit bounds the client-declared platform tag.
+const devicePlatformLimit = 32
+
+// Roster-patch budget per device: chunked projection pushes (~40
+// sessions per chunk) stay far below it, while a runaway connector
+// cannot churn the projection store.
+const (
+	deviceRosterPatchRateN   = 60
+	deviceRosterPatchRatePer = time.Minute
+)
+
 // renameDevice implements PATCH /api/devices/{deviceId}/name: the
 // account sets/clears its own device's friendly display name. Auth:
 // ai-native JWT only (management route — device tokens cannot rename).
@@ -188,6 +206,7 @@ func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
 type deviceWire struct {
 	DeviceID     string     `json:"deviceId"`
 	Name         string     `json:"name"`
+	Platform     string     `json:"platform,omitempty"`
 	FriendlyName string     `json:"friendlyName,omitempty"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
@@ -208,8 +227,9 @@ func (s *Server) listAccountDevices(w http.ResponseWriter, r *http.Request) {
 	out := make([]deviceWire, 0, len(devices))
 	for _, d := range devices {
 		out = append(out, deviceWire{
-			DeviceID: d.ID, Name: d.Name, FriendlyName: d.FriendlyName,
-			CreatedAt: d.CreatedAt.UTC(), RevokedAt: d.RevokedAt,
+			DeviceID: d.ID, Name: d.Name, Platform: d.Platform,
+			FriendlyName: d.FriendlyName,
+			CreatedAt:    d.CreatedAt.UTC(), RevokedAt: d.RevokedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
