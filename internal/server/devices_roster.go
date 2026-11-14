@@ -53,12 +53,31 @@ func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "invalid roster patch")
 		return
 	}
-	if len(patch.Agents) > 256 || len(patch.Sessions) > 256 {
-		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "roster patch too large")
+	if msg := rosterPatchProblem(patch); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, msg)
 		return
 	}
 	s.deviceExposure.ApplyPresence(deviceID, patch.Agents, patch.Sessions, s.cfg.Now())
 	writeJSON(w, http.StatusOK, map[string]any{"patched": deviceID})
+}
+
+// rosterPatchProblem returns the reason the patch is invalid (” when
+// it is acceptable): size caps and display-string hygiene.
+func rosterPatchProblem(patch rosterPatch) string {
+	if len(patch.Agents) > 256 || len(patch.Sessions) > 256 {
+		return "roster patch too large"
+	}
+	for _, a := range patch.Agents {
+		if a.Name == "" || !validDisplay(a.Name) {
+			return "agent name missing or carries control characters"
+		}
+	}
+	for _, ses := range patch.Sessions {
+		if ses.ID == "" || !validDisplay(ses.Title) || !validDisplay(ses.Path) {
+			return "session id/title/path missing or carries control characters"
+		}
+	}
+	return ""
 }
 
 // networkDeviceRosterWire is one device's exposed-only roster entry.

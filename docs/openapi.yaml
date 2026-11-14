@@ -846,11 +846,11 @@ paths:
                 name:
                   type: string
                   maxLength: 128
-                  description: Optional display name of the host.
+                  description: Optional display name of the host (rune-counted; control characters and bidi overrides rejected).
                 platform:
                   type: string
                   maxLength: 32
-                  description: Client-declared host platform tag (e.g. `darwin-arm64`, `android`).
+                  description: Client-declared host platform tag (e.g. `darwin-arm64`, `android`); control characters and bidi overrides rejected.
       responses:
         '201':
           description: Device enrolled; personal network present.
@@ -953,7 +953,7 @@ paths:
                 name:
                   type: string
                   maxLength: 64
-                  description: Friendly name (rune-counted); empty clears.
+                  description: Friendly name (rune-counted; empty clears; control characters and bidi overrides rejected).
       responses:
         '200':
           description: Renamed.
@@ -986,7 +986,9 @@ paths:
         own per-network exposure lists (personal default ON, shared
         networks default OFF — owner decision §0.2). Patches merge by
         agent name / session id — absent entries persist; retract
-        explicitly (`state: "offline"`, `exposed: false`). Rate limit:
+        explicitly (`state: "offline"`, `exposed: false`). Display
+        strings reject control characters and bidi overrides (400; the
+        WS presence path silently drops invalid entries). Rate limit:
         60 patches/min per device (chunked projection pushes fit).
         Auth: the device's own deviceToken or the owner's JWT.
       security:
@@ -1028,8 +1030,8 @@ paths:
                         type: array
                         items: { type: string }
                         description: Networks the session is exposed to.
-                      title: { type: string, description: Connector-declared display title (passthrough, in-memory projection). }
-                      path: { type: string, description: Connector-declared path (passthrough, in-memory projection). }
+                      title: { type: string, description: Connector-declared display title (passthrough, in-memory projection; control characters and bidi overrides rejected). }
+                      path: { type: string, description: Connector-declared path (passthrough, in-memory projection; control characters and bidi overrides rejected). }
                       lastActivity:
                         type: string
                         description: Connector-clock RFC3339 activity stamp (passthrough — presence truth stays server receive time).
@@ -1207,7 +1209,9 @@ paths:
         included). Machine-state flips (online/degraded/offline) are
         pushed incrementally as `presence` frames (same `devices[]`
         shape, `network` = a shared network) to every live sibling
-        socket of that network. A connector may push its own
+        socket of that network. Renames (PATCH .../name) fan out the
+        same way with the renamed machine's current state. A connector
+        may push its own
         agent/session projection as a `presence` frame (top-level
         `agents`/`sessions`, same schema as the roster PATCH — merge
         semantics; retract explicitly with `offline`/`exposed:false`).

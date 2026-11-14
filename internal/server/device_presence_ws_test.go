@@ -133,3 +133,86 @@ func TestDeviceWSMachineFlipFanout(t *testing.T) {
 		t.Fatalf("offline flip = %+v", flip.Devices)
 	}
 }
+
+// TestDisplayStringSanitization: client-declared display strings
+// (enroll name/platform, friendlyName, roster session title/path)
+// reject control characters and bidi overrides — the UI renders them
+// verbatim. WS presence frames skip invalid entries (no 400 channel).
+func TestDisplayStringSanitization(t *testing.T) {
+	env := newTestEnv(t)
+	jwt := env.authedToken("alice", "Alice")
+
+	// Enroll: RTL override in name → 400; control char in platform → 400.
+	if rec := env.do("POST", "/api/devices/enroll",
+		map[string]any{"name": "box\u202Eevil"}, jwt); rec.Code != 400 {
+		t.Fatalf("bidi name status = %d, want 400", rec.Code)
+	}
+	if rec := env.do("POST", "/api/devices/enroll",
+		map[string]any{"name": "ok", "platform": "da\x00rwin"}, jwt); rec.Code != 400 {
+		t.Fatalf("control platform status = %d, want 400", rec.Code)
+	}
+
+	dev := enrollDevice(t, env, jwt, "macbook")
+
+	// Rename with control char → 400.
+	if rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/name",
+		map[string]any{"name": "x\x1b[31m"}, jwt); rec.Code != 400 {
+		t.Fatalf("control friendlyName status = %d, want 400", rec.Code)
+	}
+
+	// Roster PATCH with bidi title → 400.
+	var mine struct {
+		Items []model.AccountNetworkWire `json:"items"`
+	}
+	decodeBody(t, env.do("GET", "/api/networks/mine", nil, jwt), &mine)
+	if rec := env.do("PATCH", "/api/devices/"+dev.DeviceID+"/roster",
+		map[string]any{"sessions": []map[string]any{
+			{"id": "s", "state": "live", "networks": []string{mine.Items[0].ID}, "title": "t\u202D"},
+		}}, jwt); rec.Code != 400 {
+		t.Fatalf("bidi title status = %d, want 400", rec.Code)
+	}
+
+	// WS presence frame with an invalid agent name: the valid sibling
+	// entry applies, the invalid one is skipped.
+	dc := dialDeviceWS(t, env, dev.DeviceToken)
+	dc.hello(dev.DeviceID, 1)
+	dc.send(deviceFrame{V: 1, Kind: kindPresence, MsgID: "pr-2",
+		Agents: []deviceAgentWire{
+			{Name: "good", State: "live", Exposed: true},
+			{Name: "ba\x00d", State: "live", Exposed: true},
+		}})
+	dc.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-2"})
+	if f := dc.next("pong"); f.RefID != "barrier-2" {
+		t.Fatalf("barrier pong refId = %q", f.RefID)
+	}
+	rec := env.do("GET", "/api/networks/"+mine.Items[0].ID+"/devices", nil, jwt)
+	var roster struct {
+		Devices []networkDeviceRosterWire `json:"devices"`
+	}
+	decodeBody(t, rec, &roster)
+	if len(roster.Devices[0].Agents) != 1 || roster.Devices[0].Agents[0].Name != "good" {
+		t.Fatalf("agents = %+v, want only the valid entry", roster.Devices[0].Agents)
+	}
+}
+
+// TestRenameFanout: renaming a device pushes a presence frame to live
+// sibling sockets — open UIs update without a roster re-GET.
+func TestRenameFanout(t *testing.T) {
+	env := newTestEnv(t)
+	jwt := env.authedToken("alice", "Alice")
+	devA := enrollDevice(t, env, jwt, "macbook")
+	devB := enrollDevice(t, env, jwt, "cli-box")
+
+	dcB := dialDeviceWS(t, env, devB.DeviceToken)
+	dcB.hello(devB.DeviceID, 1)
+
+	if rec := env.do("PATCH", "/api/devices/"+devA.DeviceID+"/name",
+		map[string]any{"name": "Renamed Box"}, jwt); rec.Code != 200 {
+		t.Fatalf("rename status = %d", rec.Code)
+	}
+	flip := dcB.next("presence")
+	if len(flip.Devices) != 1 || flip.Devices[0].DeviceID != devA.DeviceID ||
+		flip.Devices[0].FriendlyName != "Renamed Box" || flip.Devices[0].Presence != MachineOffline {
+		t.Fatalf("rename fanout = %+v", flip.Devices)
+	}
+}

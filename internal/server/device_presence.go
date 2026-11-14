@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Device presence + exposure (machine-connector contract §5/§6).
@@ -41,6 +42,22 @@ const (
 	SessionWakeOnDM  = "wake-on-DM"
 	SessionOfflineSt = "offline"
 )
+
+// validDisplay rejects control characters (Cc — C0/C1) and bidi
+// overrides in client-declared display strings: the UI renders these
+// verbatim, so splicing/RTL-spoofing payloads are refused at ingest
+// (400 on REST; WS presence frames drop the invalid entries).
+func validDisplay(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+		if (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069) {
+			return false
+		}
+	}
+	return true
+}
 
 // deviceAgentWire is one agent entry of a presence frame / roster.
 type deviceAgentWire struct {
@@ -117,17 +134,36 @@ func (e *DeviceExposure) SetMachine(deviceID, machine string, now time.Time) {
 // ApplyPresence merges one connector presence frame (agents + sessions;
 // exposure flags included). The machine state itself stays
 // server-inferred — the frame only refreshes the receive clock.
+// Entries carrying control/bidi characters in display fields are
+// skipped (same posture as the REST patch's 400).
 func (e *DeviceExposure) ApplyPresence(deviceID string, agents []deviceAgentWire, sessions []deviceSessionWire, now time.Time) {
 	st := e.state(deviceID, now)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	st.lastReceive = now
 	for _, a := range agents {
+		if a.Name == "" || !validDisplay(a.Name) || (a.DMPub != "" && !validDisplay(a.DMPub)) {
+			continue
+		}
 		st.agents[a.Name] = a
 	}
 	for _, ses := range sessions {
+		if ses.ID == "" || !validDisplay(ses.Title) || !validDisplay(ses.Path) {
+			continue
+		}
 		st.sessions[ses.ID] = ses
 	}
+}
+
+// StateOf reports the current machine state without mutating anything
+// (rename fanout reuses the live state).
+func (e *DeviceExposure) StateOf(deviceID string) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if st, ok := e.byDevice[deviceID]; ok {
+		return st.machine
+	}
+	return MachineOffline
 }
 
 // ExposedAgent reports whether the address's agent is currently exposed

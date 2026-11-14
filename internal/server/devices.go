@@ -44,12 +44,16 @@ func (s *Server) enrollDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	var req deviceEnrollRequest
 	_ = json.NewDecoder(r.Body).Decode(&req) // empty body allowed
-	if len(req.Name) > 128 {
+	if len([]rune(req.Name)) > deviceNameLimit {
 		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "device name too long")
 		return
 	}
 	if len([]rune(req.Platform)) > devicePlatformLimit {
 		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "platform too long")
+		return
+	}
+	if !validDisplay(req.Name) || !validDisplay(req.Platform) {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "device name/platform: control characters not allowed")
 		return
 	}
 
@@ -156,6 +160,10 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 // §10): rune-counted so CJK names are not silently truncated mid-char.
 const deviceFriendlyNameLimit = 64
 
+// deviceNameLimit bounds the enroll-time host name (rune-counted like
+// every other display cap).
+const deviceNameLimit = 128
+
 // devicePlatformLimit bounds the client-declared platform tag.
 const devicePlatformLimit = 32
 
@@ -188,6 +196,10 @@ func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "friendly name too long")
 		return
 	}
+	if !validDisplay(req.Name) {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "friendly name: control characters not allowed")
+		return
+	}
 	deviceID := r.PathValue("deviceId")
 	if err := s.st.RenameDevice(r.Context(), principal.UserID, deviceID, req.Name); err != nil {
 		if store.IsNotFound(err) {
@@ -196,6 +208,12 @@ func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		writeStoreErr(w, err, "device")
 		return
+	}
+	// Rename fans out to live siblings as a presence frame (machine
+	// state unchanged — metadata-only flip), so open UIs update without
+	// a roster re-GET.
+	if device, err := s.st.Device(r.Context(), deviceID); err == nil {
+		s.machineFanout(device, s.deviceExposure.StateOf(deviceID))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deviceId": deviceID, "friendlyName": req.Name})
 }
