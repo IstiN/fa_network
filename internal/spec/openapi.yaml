@@ -665,6 +665,11 @@ paths:
         ciphertext — decryption happens client-side (AC-B4: no plaintext on
         this server, ever).
 
+        **DM virtual channels (§7):** a `dm:user:<uid>:<agent>@<device>`
+        channel id needs no channel row — history is served to the dm
+        namespace owner only (`401` anonymous, generic `404` for any
+        other user), same windowed envelope view.
+
         **Anonymous showcase read:** a `public` channel of a `public`
         network is served with NO token (public showcase browsing — the
         channel is public by design). Every other anonymous case returns

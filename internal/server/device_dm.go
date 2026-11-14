@@ -55,38 +55,56 @@ func parseDMChannel(channel string) (dmAddress, bool) {
 
 // deviceDMRoute validates and relays one upstream DM mail frame.
 func (s *Server) deviceDMRoute(ctx context.Context, dc *deviceConn, f deviceFrame) {
-	if f.MsgID == "" || f.Network == "" || f.Channel == "" || f.Ciphertext == "" {
-		s.deviceMailErr(dc, f.MsgID, "invalid_mail")
+	dm, code := s.dmTarget(ctx, dc, f)
+	if code != "" {
+		s.deviceMailErr(dc, f.MsgID, code)
 		return
+	}
+	from, code := s.dmSender(dc, dm, f.From)
+	if code != "" {
+		s.deviceMailErr(dc, f.MsgID, code)
+		return
+	}
+	s.relayDM(ctx, dc, dm, f, from)
+}
+
+// dmTarget resolves the structural target ACL: frame shape, dm channel
+// shape, network membership and target-device ownership. An empty code
+// means the parsed address is routable.
+func (s *Server) dmTarget(ctx context.Context, dc *deviceConn, f deviceFrame) (dmAddress, string) {
+	if f.MsgID == "" || f.Network == "" || f.Channel == "" || f.Ciphertext == "" {
+		return dmAddress{}, "invalid_mail"
 	}
 	dm, ok := parseDMChannel(f.Channel)
 	if !ok {
-		s.deviceMailErr(dc, f.MsgID, "invalid_mail")
-		return
+		return dmAddress{}, "invalid_mail"
 	}
 	if _, err := s.st.Member(ctx, f.Network, dc.device.UserID); err != nil {
-		s.deviceMailErr(dc, f.MsgID, "not_a_member")
-		return
+		return dmAddress{}, "not_a_member"
 	}
 	target, err := s.st.Device(ctx, dm.deviceID)
 	if err != nil || target.UserID != dm.userID {
-		s.deviceMailErr(dc, f.MsgID, "unknown_device")
-		return
+		return dmAddress{}, "unknown_device"
 	}
-	// Sender authorization: user namespace owner, or the exposed agent
-	// on the dm device itself.
-	var from string
-	switch {
-	case f.From == "user:"+dc.device.UserID && dc.device.UserID == dm.userID:
-		from = dc.device.UserID
-	case dc.device.ID == dm.deviceID && s.deviceExposure.ExposedAgent(dm.deviceID, dm.agentName) &&
-		(f.From == "agent:"+dm.agentName || f.From == dm.agentName+"@"+dm.deviceID):
-		from = dm.agentName + "@" + dm.deviceID
-	default:
-		s.deviceMailErr(dc, f.MsgID, "sender_not_exposed")
-		return
-	}
+	return dm, ""
+}
 
+// dmSender authorizes the wire `from`: the user namespace owner, or the
+// exposed agent on the dm device itself (both accepted spellings).
+func (s *Server) dmSender(dc *deviceConn, dm dmAddress, from string) (string, string) {
+	if from == "user:"+dc.device.UserID && dc.device.UserID == dm.userID {
+		return dc.device.UserID, ""
+	}
+	if dc.device.ID == dm.deviceID &&
+		s.deviceExposure.ExposedAgent(dm.deviceID, dm.agentName) &&
+		(from == "agent:"+dm.agentName || from == dm.agentName+"@"+dm.deviceID) {
+		return dm.agentName + "@" + dm.deviceID, ""
+	}
+	return "", "sender_not_exposed"
+}
+
+// relayDM persists (dedup by msgId) and fans out one authorized DM.
+func (s *Server) relayDM(ctx context.Context, dc *deviceConn, dm dmAddress, f deviceFrame, from string) {
 	env := &model.Envelope{
 		ID:        f.MsgID,
 		ChannelID: f.Channel,
@@ -109,7 +127,7 @@ func (s *Server) deviceDMRoute(ctx context.Context, dc *deviceConn, f deviceFram
 	}
 	frame := deviceFrame{
 		V: 1, Kind: kindMail, MsgID: env.ID, Network: f.Network,
-		Channel: f.Channel, From: from,
+		Channel: f.Channel, From: from, To: f.To,
 		TS: env.CreatedAt.UTC().Format(time.RFC3339), Seq: env.Seq,
 		Ciphertext: env.Payload,
 	}
