@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // setUpDM builds two devices for one user: the "desktop" sender and the
@@ -32,10 +33,11 @@ func TestDeviceDMUserToAgentRoundTrip(t *testing.T) {
 	deskConn.send(mail)
 
 	// The agent's device receives the DM with the full virtual channel
-	// id and the sender's user id; the sender's own socket gets the echo
-	// (inbox view for the user side).
+	// id and the sender spelling VERBATIM ("user:<uid>" — never
+	// re-derived from the routing target); the sender's own socket gets
+	// the echo (inbox view for the user side).
 	got := mobConn.next("mail")
-	if got.MsgID != "dm-1" || got.Channel != channel || got.From != "alice" || got.Ciphertext != "sealed-1" {
+	if got.MsgID != "dm-1" || got.Channel != channel || got.From != "user:alice" || got.Ciphertext != "sealed-1" {
 		t.Fatalf("agent-side frame = %+v", got)
 	}
 	if got.Seq <= 0 {
@@ -203,5 +205,32 @@ func TestDeviceDMHistoryOwnerOnly(t *testing.T) {
 	}
 	if rec := env.do("GET", "/api/channels/"+channel+"/messages", nil, ""); rec.Code != 401 {
 		t.Fatalf("anonymous dm history = %d, want 401", rec.Code)
+	}
+}
+
+// TestDeviceDMOfflineRedeliveryVerbatimFrom: the incident msgId
+// 8ff48b96 scenario — DM sent while the target device is offline, the
+// device then connects: the server's resume push redelivers the frame
+// with `from` VERBATIM ("user:<uid>", never the addressee) and the
+// same msgId (contract §4 / AC5).
+func TestDeviceDMOfflineRedeliveryVerbatimFrom(t *testing.T) {
+	env := newTestEnv(t)
+	_, desktop, mobile, channel := setUpDM(t, env, "alice", "Alice")
+
+	// Target offline: the DM is held in the device mailbox, not lost.
+	deskConn := dialDeviceWS(t, env, desktop.DeviceToken)
+	deskConn.hello(desktop.DeviceID, 1)
+	deskConn.send(deviceFrame{V: 1, Kind: "mail", MsgID: "dm-off-1",
+		Network: desktop.PersonalNetwork.ID, Channel: channel,
+		From: "user:alice", To: "goal_builder@" + mobile.DeviceID, Ciphertext: "sealed-off"})
+	time.Sleep(50 * time.Millisecond) // route+persist before reconnect
+
+	// The offline target's mailbox must now hold the frame; reconnect
+	// pushes it verbatim.
+	mobConn := dialDeviceWS(t, env, mobile.DeviceToken)
+	mobConn.hello(mobile.DeviceID, 1)
+	got := mobConn.next("mail")
+	if got.MsgID != "dm-off-1" || got.From != "user:alice" || got.Ciphertext != "sealed-off" {
+		t.Fatalf("redelivered frame = %+v, want msgId dm-off-1 from user:alice verbatim", got)
 	}
 }

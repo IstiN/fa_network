@@ -121,13 +121,14 @@ func (s *Server) canonicalFrom(dc *deviceConn, from string) string {
 // socket whose user is a member of the network (the connector acks after
 // its local write; unacked frames ride the per-device mailbox).
 func (s *Server) fanoutDeviceMail(networkID string, env *model.Envelope) {
+	frame := deviceFrame{
+		V: 1, Kind: kindMail, MsgID: env.ID, Network: networkID,
+		Channel: env.ChannelID, From: env.SenderID,
+		TS: env.CreatedAt.UTC().Format(time.RFC3339), Seq: env.Seq,
+		Ciphertext: env.Payload,
+	}
 	for _, dc := range s.deviceConns.OfUsers(s.memberUserIDs(networkID)) {
-		s.deviceSend(dc, deviceFrame{
-			V: 1, Kind: kindMail, MsgID: env.ID, Network: networkID,
-			Channel: env.ChannelID, From: env.SenderID,
-			TS: env.CreatedAt.UTC().Format(time.RFC3339), Seq: env.Seq,
-			Ciphertext: env.Payload,
-		})
+		s.pushMailFrame(dc.device.ID, dc, frame)
 	}
 }
 

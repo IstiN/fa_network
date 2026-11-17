@@ -93,7 +93,11 @@ func (s *Server) dmTarget(ctx context.Context, dc *deviceConn, f deviceFrame) (d
 // exposed agent on the dm device itself (both accepted spellings).
 func (s *Server) dmSender(dc *deviceConn, dm dmAddress, from string) (string, string) {
 	if from == "user:"+dc.device.UserID && dc.device.UserID == dm.userID {
-		return dc.device.UserID, ""
+		// Forward the wire spelling verbatim (contract §7): the frame is
+		// stored and redelivered as "user:<uid>" — never re-derived from
+		// the routing target (gh-loss: a rewritten `from` made the
+		// recipient's codec drop a live DM as an own-reply echo).
+		return from, ""
 	}
 	if dc.device.ID == dm.deviceID &&
 		s.deviceExposure.ExposedAgent(dm.deviceID, dm.agentName) &&
@@ -132,15 +136,27 @@ func (s *Server) relayDM(ctx context.Context, dc *deviceConn, dm dmAddress, f de
 		Ciphertext: env.Payload,
 	}
 	// Fanout: the dm device + every live owner device, one frame each.
+	// Every delivery rides the device mailbox (§4 resume push): a live
+	// socket gets push+enqueue, an offline ADDRESSEE gets enqueue-only —
+	// the frame survives its reconnect instead of depending on the
+	// connector's own sync paths.
 	seen := map[*deviceConn]bool{}
 	for _, c := range s.deviceConns.OfUsers([]string{dm.userID}) {
 		seen[c] = true
 	}
-	if c := s.deviceConns.OfDevice(dm.deviceID); c != nil {
-		seen[c] = true
+	targetConn := s.deviceConns.OfDevice(dm.deviceID)
+	if targetConn != nil {
+		seen[targetConn] = true
 	}
+	servedTarget := false
 	for c := range seen {
-		s.deviceSend(c, frame)
+		s.pushMailFrame(c.device.ID, c, frame)
+		if c.device.ID == dm.deviceID {
+			servedTarget = true
+		}
+	}
+	if !servedTarget {
+		s.pushMailFrame(dm.deviceID, nil, frame) // offline addressee
 	}
 }
 

@@ -1234,7 +1234,15 @@ paths:
         without a non-empty `msgId`. `msgId` on delivered `mail`
         doubles as the fanet1 frameId inside `ciphertext` — the server
         redelivers byte-for-byte and never rewrites mail ids (contract
-        v1.1 §3).
+        v1.1 §3). Mail routing is mailbox-backed: every delivered `mail`
+        frame is enqueued per device until acked — an offline addressee's
+        frames survive its reconnect as a verbatim resume push (same
+        msgId/from/ciphertext; `from` is stored and forwarded exactly as
+        the sender spelled it, never derived from the routing target).
+        Mailbox capacity is 32 frames per device (oldest shed under
+        overflow; durable truth stays in the channel envelope store and
+        REST history). Server mail-push logs carry identity metadata
+        only (msgId/from/kind) — never ciphertext.
         One
         upstream socket per device; a second dial evicts the first.
         One socket

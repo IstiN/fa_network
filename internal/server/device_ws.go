@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -245,6 +247,13 @@ func newDeviceMailboxes() *deviceMailboxes {
 	return &deviceMailboxes{byID: map[string]*deviceMailbox{}}
 }
 
+// Drop forgets a device's mailbox (revocation).
+func (m *deviceMailboxes) Drop(deviceID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.byID, deviceID)
+}
+
 func (m *deviceMailboxes) of(deviceID string) *deviceMailbox {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -418,6 +427,27 @@ func (s *Server) deviceSend(dc *deviceConn, f deviceFrame) {
 	select {
 	case dc.send <- f:
 	default:
+	}
+}
+
+// pushMailFrame delivers one mail frame through the per-device
+// mailbox: enqueued for the §4 resume push (ack removes), pushed when
+// a live socket exists, enqueued-only while the device is offline (the
+// DM-loss fix: offline addressees no longer depend on client-side
+// sync). The log line carries identity metadata only — msgId/from/to
+// and channel kind, never ciphertext (relay-only law).
+func (s *Server) pushMailFrame(deviceID string, dc *deviceConn, f deviceFrame) {
+	box := s.deviceMail.of(deviceID)
+	box.Enqueue(f)
+	if f.Kind == kindMail {
+		kind := "channel"
+		if strings.HasPrefix(f.Channel, "dm:") {
+			kind = "dm"
+		}
+		log.Printf("device-mail dev=%s msgId=%s from=%s kind=%s", deviceID, f.MsgID, f.From, kind)
+	}
+	if dc != nil {
+		s.deviceSend(dc, f)
 	}
 }
 
