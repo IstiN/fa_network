@@ -176,6 +176,7 @@ type AgentWire struct {
 type WakeupRegistrationWire struct {
 	URL             string    `json:"url"`
 	DebounceSeconds int       `json:"debounceSeconds"`
+	WakeType        string    `json:"wakeType,omitempty"` // desktop | push | extension
 	CreatedAt       time.Time `json:"createdAt"`
 }
 

@@ -67,7 +67,7 @@ func TestDeviceWSPresenceFrameUpdatesProjection(t *testing.T) {
 	dc.hello(dev.DeviceID, 1)
 	dc.send(deviceFrame{
 		V: 1, Kind: kindPresence, MsgID: "pr-1",
-		Agents:   []deviceAgentWire{{Name: "alf", State: "live", Exposed: true}},
+		Agents:   []deviceAgentWire{{Name: "alf", State: "live", Exposed: exposedTrue()}},
 		Sessions: []deviceSessionWire{{ID: "s1", State: SessionLive, Networks: []string{mine.Items[0].ID}}},
 	})
 	// The server reads frames sequentially on this socket: waiting for
@@ -87,7 +87,7 @@ func TestDeviceWSPresenceFrameUpdatesProjection(t *testing.T) {
 		t.Fatalf("roster = %+v", roster.Devices)
 	}
 	d := roster.Devices[0]
-	if len(d.Agents) != 1 || d.Agents[0].Name != "alf" || !d.Agents[0].Exposed {
+	if len(d.Agents) != 1 || d.Agents[0].Name != "alf" || (d.Agents[0].Exposed != nil && !*d.Agents[0].Exposed) {
 		t.Fatalf("agents = %+v", d.Agents)
 	}
 	if len(d.Sessions) != 1 || d.Sessions[0].ID != "s1" {
@@ -178,8 +178,8 @@ func TestDisplayStringSanitization(t *testing.T) {
 	dc.hello(dev.DeviceID, 1)
 	dc.send(deviceFrame{V: 1, Kind: kindPresence, MsgID: "pr-2",
 		Agents: []deviceAgentWire{
-			{Name: "good", State: "live", Exposed: true},
-			{Name: "ba\x00d", State: "live", Exposed: true},
+			{Name: "good", State: "live", Exposed: exposedTrue()},
+			{Name: "ba\x00d", State: "live", Exposed: exposedTrue()},
 		}})
 	dc.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-2"})
 	if f := dc.next("pong"); f.RefID != "barrier-2" {

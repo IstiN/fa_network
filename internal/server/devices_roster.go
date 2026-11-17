@@ -126,7 +126,10 @@ func (s *Server) machineRosterOf(ctx context.Context, networkID string, members 
 			continue
 		}
 		for _, d := range devices {
-			machine, agents, sessions := s.deviceExposure.Roster(d.ID, networkID)
+			if d.RevokedAt != nil {
+				continue // contract §8.2: revocation removes from rosters
+			}
+			machine, agents, sessions := s.deviceExposure.Roster(d.ID, networkID, s.cfg.Now())
 			out = append(out, networkDeviceRosterWire{
 				DeviceID: d.ID, Name: d.Name, Platform: d.Platform,
 				FriendlyName: d.FriendlyName,

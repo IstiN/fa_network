@@ -112,6 +112,7 @@ var pgAlterStatements = []string{
 	`ALTER TABLE networks ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT FALSE`,
 	`ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS sender_key TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS sender_name TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wakeups ADD COLUMN IF NOT EXISTS wake_type TEXT NOT NULL DEFAULT ''`,
 }
 
 // NewPostgres connects, verifies, and migrates a Postgres store.

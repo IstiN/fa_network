@@ -151,6 +151,7 @@ type WakeupRegistration struct {
 	URL             string
 	SecretHash      []byte
 	DebounceSeconds int
+	WakeType        string // '' | desktop | push | extension (payload type hint)
 	CreatedAt       time.Time
 }
 

@@ -30,6 +30,7 @@ type wakeupRegistrationInput struct {
 	URL             string `json:"url"`
 	Secret          string `json:"secret"`
 	DebounceSeconds int    `json:"debounceSeconds"`
+	WakeType        string `json:"wakeType"` // '' | desktop | push | extension
 }
 
 // getWakeup implements GET .../agents/{id}/wakeups (owner/admin).
@@ -46,6 +47,7 @@ func (s *Server) getWakeup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, model.WakeupRegistrationWire{
 		URL:             reg.URL,
 		DebounceSeconds: reg.DebounceSeconds,
+		WakeType:        reg.WakeType,
 		CreatedAt:       reg.CreatedAt,
 	})
 }
@@ -66,6 +68,12 @@ func (s *Server) registerWakeup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "invalid webhook url")
 		return
 	}
+	switch req.WakeType {
+	case "", "desktop", "push", "extension":
+	default:
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "wakeType must be desktop|push|extension")
+		return
+	}
 	debounce := req.DebounceSeconds
 	if debounce == 0 {
 		debounce = 300
@@ -84,6 +92,7 @@ func (s *Server) registerWakeup(w http.ResponseWriter, r *http.Request) {
 		URL:             req.URL,
 		SecretHash:      hashSecret(req.Secret),
 		DebounceSeconds: debounce,
+		WakeType:        req.WakeType,
 		CreatedAt:       s.cfg.Now(),
 	}
 	if err := s.st.UpsertWakeup(r.Context(), reg); err != nil {
@@ -93,6 +102,7 @@ func (s *Server) registerWakeup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, model.WakeupRegistrationWire{
 		URL:             reg.URL,
 		DebounceSeconds: reg.DebounceSeconds,
+		WakeType:        reg.WakeType,
 		CreatedAt:       reg.CreatedAt,
 	})
 }

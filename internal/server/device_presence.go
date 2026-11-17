@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 	"unicode"
@@ -61,10 +62,19 @@ func validDisplay(s string) bool {
 
 // deviceAgentWire is one agent entry of a presence frame / roster.
 type deviceAgentWire struct {
-	Name    string `json:"name"` // agentName; address = name@deviceId
-	State   string `json:"state"`
-	Exposed bool   `json:"exposed"`
+	Name  string `json:"name"` // agentName; address = name@deviceId
+	State string `json:"state"`
+	// Exposed nil = exposed (contract §8.2: address + state suffices —
+	// the roster is the exposed catalog, not the live registry);
+	// explicit false hides the agent.
+	Exposed *bool  `json:"exposed,omitempty"`
 	DMPub   string `json:"dmPub,omitempty"`
+}
+
+// exposedTrue is the explicit-opt-in literal for tests/connector code.
+func exposedTrue() *bool {
+	b := true
+	return &b
 }
 
 // deviceSessionWire is one session entry. Exposure is per NETWORK
@@ -80,6 +90,84 @@ type deviceSessionWire struct {
 	Title        string   `json:"title,omitempty"`
 	Path         string   `json:"path,omitempty"`
 	LastActivity string   `json:"lastActivity,omitempty"` // RFC3339, connector clock
+	// Extra carries unknown/additive session metadata keys (snippet,
+	// cwd, ...) verbatim through the projection — contract §8.1: the
+	// server MUST preserve them when merging patches.
+	Extra map[string]any `json:"-"`
+}
+
+// sessionKnownKeys are the fields decoded into the struct; every other
+// key lands in Extra unchanged.
+var sessionKnownKeys = map[string]bool{
+	"id": true, "state": true, "networks": true,
+	"title": true, "path": true, "lastActivity": true,
+}
+
+// UnmarshalJSON splits known fields from additive metadata.
+func (w *deviceSessionWire) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	type known struct {
+		ID           string   `json:"id"`
+		State        string   `json:"state"`
+		Networks     []string `json:"networks"`
+		Title        string   `json:"title"`
+		Path         string   `json:"path"`
+		LastActivity string   `json:"lastActivity"`
+	}
+	var k known
+	if err := json.Unmarshal(data, &k); err != nil {
+		return err
+	}
+	w.ID, w.State, w.Networks, w.Title, w.Path, w.LastActivity =
+		k.ID, k.State, k.Networks, k.Title, k.Path, k.LastActivity
+	w.Extra = nil
+	for key, v := range raw {
+		if sessionKnownKeys[key] {
+			continue
+		}
+		var val any
+		if err := json.Unmarshal(v, &val); err != nil {
+			return err
+		}
+		if w.Extra == nil {
+			w.Extra = map[string]any{}
+		}
+		w.Extra[key] = val
+	}
+	return nil
+}
+
+// MarshalJSON re-emits known fields plus the preserved additive keys.
+func (w deviceSessionWire) MarshalJSON() ([]byte, error) {
+	type known struct {
+		ID           string   `json:"id"`
+		State        string   `json:"state"`
+		Networks     []string `json:"networks,omitempty"`
+		Title        string   `json:"title,omitempty"`
+		Path         string   `json:"path,omitempty"`
+		LastActivity string   `json:"lastActivity,omitempty"`
+	}
+	base, err := json.Marshal(known{
+		ID: w.ID, State: w.State, Networks: w.Networks,
+		Title: w.Title, Path: w.Path, LastActivity: w.LastActivity,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(w.Extra) == 0 {
+		return base, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(base, &m); err != nil {
+		return nil, err
+	}
+	for key, v := range w.Extra {
+		m[key] = v
+	}
+	return json.Marshal(m)
 }
 
 // deviceState is one device's projection.
@@ -87,6 +175,8 @@ type deviceState struct {
 	machine     string
 	agents      map[string]deviceAgentWire
 	sessions    map[string]deviceSessionWire
+	agentSeen   map[string]time.Time // server receive time per entry
+	sessionSeen map[string]time.Time
 	lastReceive time.Time
 	graceUntil  time.Time
 }
@@ -105,6 +195,8 @@ func (e *DeviceExposure) state(deviceID string, now time.Time) *deviceState {
 			machine:     MachineOffline,
 			agents:      map[string]deviceAgentWire{},
 			sessions:    map[string]deviceSessionWire{},
+			agentSeen:   map[string]time.Time{},
+			sessionSeen: map[string]time.Time{},
 			lastReceive: now,
 		}
 		e.byDevice[deviceID] = st
@@ -146,13 +238,63 @@ func (e *DeviceExposure) ApplyPresence(deviceID string, agents []deviceAgentWire
 			continue
 		}
 		st.agents[a.Name] = a
+		st.agentSeen[a.Name] = now
 	}
 	for _, ses := range sessions {
-		if ses.ID == "" || !validDisplay(ses.Title) || !validDisplay(ses.Path) {
+		applySessionEntry(st, ses, now)
+	}
+	e.reapLocked(now)
+}
+
+// applySessionEntry merges one session row: invalid display strings are
+// skipped; an offline entry with empty networks is an authoritative
+// retraction (contract §8.2 — deleted, not stored; only a fresh
+// connector patch resurrects it).
+func applySessionEntry(st *deviceState, ses deviceSessionWire, now time.Time) {
+	if ses.ID == "" || !validDisplay(ses.Title) || !validDisplay(ses.Path) {
+		return
+	}
+	if ses.State == "offline" && len(ses.Networks) == 0 {
+		delete(st.sessions, ses.ID)
+		delete(st.sessionSeen, ses.ID)
+		return
+	}
+	st.sessions[ses.ID] = ses
+	st.sessionSeen[ses.ID] = now
+}
+
+// offlineEntryTL bounds how long an offline device's projected entries
+// survive without a refresh (contract §8.2: 30-day reap on server
+// receive time — client timestamps are never trusted).
+const offlineEntryTL = 30 * 24 * time.Hour
+
+// reapLocked drops entries of offline devices that have not been
+// refreshed within offlineEntryTL. Runs under e.mu.
+func (e *DeviceExposure) reapLocked(now time.Time) {
+	for _, st := range e.byDevice {
+		if st.machine != MachineOffline {
 			continue
 		}
-		st.sessions[ses.ID] = ses
+		for sid, seen := range st.sessionSeen {
+			if now.Sub(seen) > offlineEntryTL {
+				delete(st.sessions, sid)
+				delete(st.sessionSeen, sid)
+			}
+		}
+		for aid, seen := range st.agentSeen {
+			if now.Sub(seen) > offlineEntryTL {
+				delete(st.agents, aid)
+				delete(st.agentSeen, aid)
+			}
+		}
 	}
+}
+
+// DropDevice forgets a device's whole projection (revocation).
+func (e *DeviceExposure) DropDevice(deviceID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.byDevice, deviceID)
 }
 
 // StateOf reports the current machine state without mutating anything
@@ -176,7 +318,7 @@ func (e *DeviceExposure) ExposedAgent(deviceID, agentName string) bool {
 		return false
 	}
 	a, ok := st.agents[agentName]
-	return ok && a.Exposed
+	return ok && (a.Exposed == nil || *a.Exposed)
 }
 
 // SweeperTicks walks every device, applying the degraded → offline
@@ -197,16 +339,17 @@ func (e *DeviceExposure) SweeperTick(now time.Time) []string {
 // Roster returns the exposed-only projection for one device within one
 // network (machine presence + exposed agents with dmPub + sessions
 // exposed to THAT network).
-func (e *DeviceExposure) Roster(deviceID, networkID string) (machine string, agents []deviceAgentWire, sessions []deviceSessionWire) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+func (e *DeviceExposure) Roster(deviceID, networkID string, now time.Time) (machine string, agents []deviceAgentWire, sessions []deviceSessionWire) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.reapLocked(now)
 	st, ok := e.byDevice[deviceID]
 	if !ok {
 		return MachineOffline, nil, nil
 	}
 	machine = st.machine
 	for _, a := range st.agents {
-		if a.Exposed {
+		if a.Exposed == nil || *a.Exposed {
 			agents = append(agents, a)
 		}
 	}

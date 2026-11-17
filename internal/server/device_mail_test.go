@@ -232,7 +232,7 @@ func TestPresenceMachineLifecycleAndRoster(t *testing.T) {
 	// Presence frame: agent exposed+live, session exposed to the
 	// personal network (default ON per §6).
 	dc.send(deviceFrame{V: 1, Kind: "presence", MsgID: "pr-1",
-		Agents: []deviceAgentWire{{Name: "goal_builder", State: "live", Exposed: true, DMPub: "pub"}},
+		Agents: []deviceAgentWire{{Name: "goal_builder", State: "live", Exposed: exposedTrue(), DMPub: "pub"}},
 		Sessions: []deviceSessionWire{{ID: "sess-1", State: "live",
 			Networks: []string{dev.PersonalNetwork.ID}}}})
 	time.Sleep(50 * time.Millisecond)
@@ -308,7 +308,7 @@ func TestSharedNetworkSessionsDefaultHidden(t *testing.T) {
 	dc := dialDeviceWS(t, env, dev.DeviceToken)
 	dc.hello(dev.DeviceID, 1)
 	dc.send(deviceFrame{V: 1, Kind: "presence", MsgID: "pr",
-		Agents: []deviceAgentWire{{Name: "gb", State: "live", Exposed: true}},
+		Agents: []deviceAgentWire{{Name: "gb", State: "live", Exposed: exposedTrue()}},
 		Sessions: []deviceSessionWire{{ID: "sess-1", State: "live",
 			Networks: []string{dev.PersonalNetwork.ID}}}})
 	time.Sleep(50 * time.Millisecond)

@@ -986,10 +986,19 @@ paths:
         own per-network exposure lists (personal default ON, shared
         networks default OFF — owner decision §0.2). Patches merge by
         agent name / session id — absent entries persist; retract
-        explicitly (`state: "offline"`, `exposed: false`). Display
-        strings reject control characters and bidi overrides (400; the
-        WS presence path silently drops invalid entries). Rate limit:
-        60 patches/min per device (chunked projection pushes fit).
+        explicitly (`state: "offline"`, `exposed: false`). A patch
+        entry with `state: "offline"` AND an empty `networks` array is
+        an AUTHORITATIVE RETRACTION: the row is deleted from the
+        projection (later snapshots omit it; a fresh live patch
+        resurrects it). Offline rows WITH networks persist as rendered
+        catalog rows and are reaped after 30 days without a refresh
+        (server receive time — client timestamps are never trusted).
+        Unknown/additive session metadata keys (e.g. `snippet`, `cwd`)
+        are preserved verbatim through the projection and echoed in
+        roster snapshots. Display strings reject control characters and
+        bidi overrides (400; the WS presence path silently drops
+        invalid entries). Rate limit: 60 patches/min per device
+        (chunked projection pushes fit).
         Auth: the device's own deviceToken or the owner's JWT.
       security:
         - authJwt: []
@@ -1029,7 +1038,8 @@ paths:
                       networks:
                         type: array
                         items: { type: string }
-                        description: Networks the session is exposed to.
+                        description: Networks the session is exposed to. An offline
+                          session with an empty array is a retraction (see notes).
                       title: { type: string, description: Connector-declared display title (passthrough, in-memory projection; control characters and bidi overrides rejected). }
                       path: { type: string, description: Connector-declared path (passthrough, in-memory projection; control characters and bidi overrides rejected). }
                       lastActivity:
@@ -1084,7 +1094,11 @@ paths:
         `friendlyName` when present (additive; §10 rename flow). Exposure
         filtering is the deny-by-default boundary: a fresh device in a
         shared network publishes zero sessions until the owner opts in
-        per network.
+        per network. Revoked devices are omitted; offline rows are
+        reaped after 30 idle days; agent entries list when `exposed` is
+        omitted (catalog default) and hide on explicit
+        `exposed: false`; additive session metadata keys ride through
+        verbatim.
       security:
         - sessionToken: []
         - authJwt: []
@@ -2122,6 +2136,14 @@ components:
           default: 300
           minimum: 30
           description: One dispatch per window while the agent stays offline.
+        wakeType:
+          type: string
+          enum: [desktop, push, extension]
+          description: |
+            Wake-path hint echoed in the dispatch payload (still
+            identity-only — never message content). `desktop` = headless
+            process launch, `push` = APNs/FCM, `extension` = browser
+            service-worker revive.
 
     WakeupRegistration:
       type: object
@@ -2129,6 +2151,7 @@ components:
       properties:
         url: { type: string, format: uri }
         debounceSeconds: { type: integer }
+        wakeType: { type: string, enum: [desktop, push, extension] }
         createdAt: { type: string, format: date-time }
 
     WakeupDispatch:

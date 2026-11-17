@@ -26,10 +26,13 @@ type WakeStore interface {
 	LogDispatch(ctx context.Context, networkID string, d *model.WakeupDispatch) error
 }
 
-// payload is the identity-only webhook body.
+// payload is the identity-only webhook body. WakeType is the wake-path
+// hint from the registration (desktop | push | extension) — still
+// identity metadata, never message content.
 type payload struct {
 	AgentID     string    `json:"agentId"`
 	NetworkID   string    `json:"networkId"`
+	WakeType    string    `json:"wakeType,omitempty"`
 	TriggeredAt time.Time `json:"triggeredAt"`
 }
 
@@ -109,7 +112,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, networkID, agentID, presence 
 	d.lastDispatch[key] = d.now()
 	d.mu.Unlock()
 
-	body, err := json.Marshal(payload{AgentID: agentID, NetworkID: networkID, TriggeredAt: d.now()})
+	body, err := json.Marshal(payload{
+		AgentID: agentID, NetworkID: networkID, WakeType: reg.WakeType, TriggeredAt: d.now(),
+	})
 	if err != nil {
 		return err
 	}

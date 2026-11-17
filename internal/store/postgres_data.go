@@ -284,11 +284,11 @@ func (p *PGStore) DeleteSessionsOfNetwork(ctx context.Context, networkID string)
 // UpsertWakeup implements Wakeups.
 func (p *PGStore) UpsertWakeup(ctx context.Context, w *model.WakeupRegistration) error {
 	_, err := p.db.ExecContext(ctx,
-		`INSERT INTO wakeups (network_id, agent_id, url, secret_hash, debounce_seconds, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6)
+		`INSERT INTO wakeups (network_id, agent_id, url, secret_hash, debounce_seconds, wake_type, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)
 		 ON CONFLICT (network_id, agent_id) DO UPDATE
-		 SET url=$3, secret_hash=$4, debounce_seconds=$5, created_at=$6`,
-		w.NetworkID, w.AgentID, w.URL, w.SecretHash, w.DebounceSeconds, w.CreatedAt.UTC())
+		 SET url=$3, secret_hash=$4, debounce_seconds=$5, wake_type=$6, created_at=$7`,
+		w.NetworkID, w.AgentID, w.URL, w.SecretHash, w.DebounceSeconds, w.WakeType, w.CreatedAt.UTC())
 	return mapErr(err)
 }
 
@@ -296,9 +296,9 @@ func (p *PGStore) UpsertWakeup(ctx context.Context, w *model.WakeupRegistration)
 func (p *PGStore) Wakeup(ctx context.Context, networkID, agentID string) (*model.WakeupRegistration, error) {
 	var w model.WakeupRegistration
 	err := p.db.QueryRowContext(ctx,
-		`SELECT network_id, agent_id, url, secret_hash, debounce_seconds, created_at
+		`SELECT network_id, agent_id, url, secret_hash, debounce_seconds, wake_type, created_at
 		 FROM wakeups WHERE network_id=$1 AND agent_id=$2`, networkID, agentID,
-	).Scan(&w.NetworkID, &w.AgentID, &w.URL, &w.SecretHash, &w.DebounceSeconds, &w.CreatedAt)
+	).Scan(&w.NetworkID, &w.AgentID, &w.URL, &w.SecretHash, &w.DebounceSeconds, &w.WakeType, &w.CreatedAt)
 	if err != nil {
 		return nil, mapErr(err)
 	}

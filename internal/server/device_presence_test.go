@@ -19,7 +19,7 @@ func TestDeviceGraceSweeper(t *testing.T) {
 	if len(flipped) != 0 {
 		t.Fatalf("early tick flipped %v", flipped)
 	}
-	if m, _, _ := e.Roster("d-deg", ""); m != MachineDegraded {
+	if m, _, _ := e.Roster("d-deg", "", time.Now()); m != MachineDegraded {
 		t.Fatalf("degraded lost early: %q", m)
 	}
 
@@ -28,10 +28,10 @@ func TestDeviceGraceSweeper(t *testing.T) {
 	if len(flipped) != 1 || flipped[0] != "d-deg" {
 		t.Fatalf("flipped = %v, want d-deg", flipped)
 	}
-	if m, _, _ := e.Roster("d-deg", ""); m != MachineOffline {
+	if m, _, _ := e.Roster("d-deg", "", time.Now()); m != MachineOffline {
 		t.Fatalf("degraded did not expire: %q", m)
 	}
-	if m, _, _ := e.Roster("d-live", ""); m != MachineOnline {
+	if m, _, _ := e.Roster("d-live", "", time.Now()); m != MachineOnline {
 		t.Fatalf("online device flipped: %q", m)
 	}
 
