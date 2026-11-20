@@ -686,6 +686,10 @@ paths:
             cursor returns the page strictly OLDER than the one you got
             it from («load earlier»). Items are oldest→newest within a
             page; `nextCursor` is empty when no older messages remain.
+            A MALFORMED cursor is ignored — the request serves the
+            latest page (200); gap cursors after retention always
+            resolve (numeric keyset). Client recovery on a bad cursor:
+            drop it and refetch from the latest page.
           schema: { type: string }
         - name: limit
           in: query

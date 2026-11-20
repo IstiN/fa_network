@@ -2,8 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"testing"
 	"time"
+
+	"github.com/IstiN/fa_network/internal/model"
 )
 
 // setUpDM builds two devices for one user: the "desktop" sender and the
@@ -232,5 +236,37 @@ func TestDeviceDMOfflineRedeliveryVerbatimFrom(t *testing.T) {
 	got := mobConn.next("mail")
 	if got.MsgID != "dm-off-1" || got.From != "user:alice" || got.Ciphertext != "sealed-off" {
 		t.Fatalf("redelivered frame = %+v, want msgId dm-off-1 from user:alice verbatim", got)
+	}
+}
+
+// TestDMMalformedCursorRestartsAtLatest: a garbage cursor never 404s —
+// the page restarts at the latest (client recovery = drop the cursor).
+func TestDMMalformedCursorRestartsAtLatest(t *testing.T) {
+	env := newTestEnv(t)
+	jwt, desktop, mobile, channel := setUpDM(t, env, "alice", "Alice")
+	_ = desktop
+	_ = mobile
+
+	deskConn := dialDeviceWS(t, env, desktop.DeviceToken)
+	deskConn.hello(desktop.DeviceID, 1)
+	for i := 0; i < 3; i++ {
+		deskConn.send(deviceFrame{V: 1, Kind: "mail", MsgID: fmt.Sprintf("dm-c-%d", i),
+			Network: desktop.PersonalNetwork.ID, Channel: channel,
+			From: "user:alice", To: "goal_builder@" + mobile.DeviceID,
+			Ciphertext: fmt.Sprintf("sealed-%d", i)})
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	rec := env.do("GET", "/api/channels/"+url.PathEscape(channel)+"/messages?cursor=garbage&limit=2", nil, jwt)
+	if rec.Code != 200 {
+		t.Fatalf("garbage cursor status = %d body %s", rec.Code, rec.Body.String())
+	}
+	var page struct {
+		Items      []model.EnvelopeWire `json:"items"`
+		NextCursor string               `json:"nextCursor"`
+	}
+	decodeBody(t, rec, &page)
+	if len(page.Items) != 2 || page.NextCursor == "" {
+		t.Fatalf("latest page after garbage cursor = %+v", page)
 	}
 }

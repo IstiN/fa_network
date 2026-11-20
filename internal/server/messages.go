@@ -45,15 +45,22 @@ func (s *Server) getMessages(w http.ResponseWriter, r *http.Request) {
 	s.writeEnvelopePage(w, r, channel)
 }
 
-// writeEnvelopePage renders one history page of envelope wires.
+// writeEnvelopePage renders one history page of envelope wires. The
+// cursor is a numeric seq keyset: a malformed cursor restarts at the
+// latest page (a 404 class of one, eliminated — clients that reset on
+// 404 keep working; gap cursors after retention always resolve).
 func (s *Server) writeEnvelopePage(w http.ResponseWriter, r *http.Request, channel *model.Channel) {
 	limit := queryInt(r, "limit", 50)
 	if limit > 200 {
 		limit = 200
 	}
-	page, err := s.st.Envelopes(r.Context(), channel.ID, r.URL.Query().Get("cursor"), limit)
+	cursor := r.URL.Query().Get("cursor")
+	if _, err := strconv.ParseInt(cursor, 10, 64); cursor != "" && err != nil {
+		cursor = ""
+	}
+	page, err := s.st.Envelopes(r.Context(), channel.ID, cursor, limit)
 	if err != nil {
-		writeError(w, http.StatusNotFound, CodeNotFound, "unknown cursor")
+		writeError(w, http.StatusInternalServerError, "internal", "store error")
 		return
 	}
 	items := make([]model.EnvelopeWire, 0, len(page.Items))

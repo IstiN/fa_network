@@ -167,9 +167,10 @@ func TestSendMessageValidationBranches(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cross-network write: %d", rec.Code)
 	}
-	// Invalid cursor on history.
+	// Malformed cursor on history: restarts at the latest page (200),
+	// never a 404 — one error class less for client recovery paths.
 	rec = env.do("GET", "/api/channels/"+channelID+"/messages?cursor=zz", nil, sess)
-	if rec.Code != http.StatusNotFound {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("bad cursor: %d", rec.Code)
 	}
 }
