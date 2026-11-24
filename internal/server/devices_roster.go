@@ -58,6 +58,11 @@ func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deviceExposure.ApplyPresence(deviceID, patch.Agents, patch.Sessions, s.cfg.Now())
+	if device := s.deviceByToken(r.Context(), bearerToken(r)); device != nil {
+		s.agentsFanout(device)
+	} else if resolved, err := s.st.Device(r.Context(), deviceID); err == nil {
+		s.agentsFanout(resolved)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"patched": deviceID})
 }
 

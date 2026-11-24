@@ -31,22 +31,18 @@ func (s *Server) setMachineAndFanout(device *model.Device, machine string) {
 	s.machineFanout(device, machine)
 }
 
-// machineFanout sends one presence frame per live sibling socket per
-// shared network. Targeting is user-based: the shared-network check
-// walks both users' account networks (small N; the flip cadence is
-// connect/disconnect, not per-message).
-func (s *Server) machineFanout(device *model.Device, machine string) {
+// eachSharedNetworkSocket runs fn for every live sibling socket per
+// shared account network. Targeting is user-based: the shared-network
+// check walks both users' account networks (small N). The originator
+// device is skipped — it knows its own state first.
+func (s *Server) eachSharedNetworkSocket(device *model.Device, fn func(dc *deviceConn, networkID string)) {
 	if s.deviceConns == nil {
 		return
 	}
 	ctx := context.Background()
 	mine, err := s.st.AccountNetworks(ctx, device.UserID)
-	if err != nil || len(mine) == 0 {
+	if err != nil {
 		return
-	}
-	entry := networkDeviceRosterWire{
-		DeviceID: device.ID, Name: device.Name, FriendlyName: device.FriendlyName,
-		UserID: device.UserID, Presence: machine,
 	}
 	for _, dc := range s.deviceConns.All() {
 		if dc.device.ID == device.ID {
@@ -57,16 +53,51 @@ func (s *Server) machineFanout(device *model.Device, machine string) {
 			continue
 		}
 		for _, an := range mine {
-			if !accountNetworkIDs(theirs).contains(an.Network.ID) {
-				continue
+			if accountNetworkIDs(theirs).contains(an.Network.ID) {
+				fn(dc, an.Network.ID)
 			}
-			s.deviceSend(dc, deviceFrame{
-				V: 1, Kind: kindPresence, MsgID: newToken(),
-				Network: an.Network.ID, TS: s.cfg.Now().UTC().Format(time.RFC3339),
-				Devices: []networkDeviceRosterWire{entry},
-			})
 		}
 	}
+}
+
+// machineFanout sends one presence frame per live sibling socket per
+// shared network (the flip cadence is connect/disconnect, not
+// per-message; the frame carries devices[].presence only).
+func (s *Server) machineFanout(device *model.Device, machine string) {
+	entry := networkDeviceRosterWire{
+		DeviceID: device.ID, Name: device.Name, FriendlyName: device.FriendlyName,
+		UserID: device.UserID, Presence: machine,
+	}
+	s.eachSharedNetworkSocket(device, func(dc *deviceConn, networkID string) {
+		s.deviceSend(dc, deviceFrame{
+			V: 1, Kind: kindPresence, MsgID: newToken(),
+			Network: networkID, TS: s.cfg.Now().UTC().Format(time.RFC3339),
+			Devices: []networkDeviceRosterWire{entry},
+		})
+	})
+}
+
+// agentsFanout pushes the catalog delta after a connector presence
+// update (WS kindPresence or REST roster patch): one presence frame
+// per live sibling socket per shared network, carrying the device's
+// exposed agents and per-network sessions — the same read model as
+// GET /api/networks/{id}/devices (contract §8: additive devices[]
+// keys on the presence frame; older clients ignore them). Idempotent
+// for clients; the cadence is the connector's presence cadence.
+func (s *Server) agentsFanout(device *model.Device) {
+	now := s.cfg.Now()
+	s.eachSharedNetworkSocket(device, func(dc *deviceConn, networkID string) {
+		machine, agents, sessions := s.deviceExposure.Roster(device.ID, networkID, now)
+		s.deviceSend(dc, deviceFrame{
+			V: 1, Kind: kindPresence, MsgID: newToken(),
+			Network: networkID, TS: now.UTC().Format(time.RFC3339),
+			Devices: []networkDeviceRosterWire{{
+				DeviceID: device.ID, Name: device.Name, Platform: device.Platform,
+				FriendlyName: device.FriendlyName, UserID: device.UserID,
+				Presence: machine, Agents: agents, Sessions: sessions,
+			}},
+		})
+	})
 }
 
 // sweeperOfflineFanout pushes offline flips produced by the degraded →

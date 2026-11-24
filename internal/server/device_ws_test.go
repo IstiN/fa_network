@@ -85,6 +85,27 @@ func (c *deviceWSClient) next(kinds ...string) deviceFrame {
 	}
 }
 
+// nextAny returns the next frame of any kind (backlog first, deadline 2s).
+func (c *deviceWSClient) nextAny() deviceFrame {
+	c.t.Helper()
+	if len(c.backlog) > 0 {
+		f := c.backlog[0]
+		c.backlog = c.backlog[1:]
+		return f
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(2*time.Second))
+	defer cancel()
+	_, raw, err := c.conn.Read(ctx)
+	if err != nil {
+		c.t.Fatalf("device ws read: %v", err)
+	}
+	var f deviceFrame
+	if err := json.Unmarshal(raw, &f); err != nil {
+		c.t.Fatalf("device ws unmarshal: %v", err)
+	}
+	return f
+}
+
 func (c *deviceWSClient) send(f deviceFrame) {
 	c.t.Helper()
 	raw, err := json.Marshal(f)

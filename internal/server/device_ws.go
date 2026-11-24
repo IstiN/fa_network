@@ -473,6 +473,7 @@ func (s *Server) deviceReadPump(ctx context.Context, conn *websocket.Conn, dc *d
 			s.deviceMailRoute(ctx, dc, f)
 		case kindPresence:
 			s.deviceExposure.ApplyPresence(dc.device.ID, f.Agents, f.Sessions, s.cfg.Now())
+			s.agentsFanout(dc.device)
 		default:
 			// hello outside handshake, unknown kinds: ignore (log-free
 			// noise discipline; the connector retries with hello).

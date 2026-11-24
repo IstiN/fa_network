@@ -1227,7 +1227,13 @@ paths:
         included). Machine-state flips (online/degraded/offline) are
         pushed incrementally as `presence` frames (same `devices[]`
         shape, `network` = a shared network) to every live sibling
-        socket of that network. Renames (PATCH .../name) fan out the
+        socket of that network. A connector catalog update (WS
+        `presence` frame or REST roster PATCH) is likewise fanned out
+        to sibling sockets of shared networks: a `presence` frame whose
+        `devices[]` entry adds `agents`/`sessions` (same schema as the
+        snapshot entry — additive keys, older clients ignore them; the
+        merged projection, PATCH semantics included; the originator
+        device is skipped). Renames (PATCH .../name) fan out the
         same way with the renamed machine's current state. A connector
         may push its own
         agent/session projection as a `presence` frame (top-level

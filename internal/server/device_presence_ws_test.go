@@ -216,3 +216,88 @@ func TestRenameFanout(t *testing.T) {
 		t.Fatalf("rename fanout = %+v", flip.Devices)
 	}
 }
+
+// TestDeviceWSCatalogFanout: a connector presence update (WS frame or
+// REST roster patch) is fanned out to live sibling sockets sharing a
+// network as a presence frame whose devices[] entry carries the
+// agent/session catalog (contract §8 additive keys — the incremental
+// counterpart of the roster snapshot). The originator device is
+// skipped (it knows its own state).
+func TestDeviceWSCatalogFanout(t *testing.T) {
+	env := newTestEnv(t)
+	jwt := env.authedToken("alice", "Alice")
+	devA := enrollDevice(t, env, jwt, "macbook")
+	devB := enrollDevice(t, env, jwt, "cli-box")
+
+	var mine struct {
+		Items []model.AccountNetworkWire `json:"items"`
+	}
+	decodeBody(t, env.do("GET", "/api/networks/mine", nil, jwt), &mine)
+	netID := mine.Items[0].ID
+
+	dcB := dialDeviceWS(t, env, devB.DeviceToken)
+	dcB.hello(devB.DeviceID, 1)
+	dcA := dialDeviceWS(t, env, devA.DeviceToken)
+	dcA.hello(devA.DeviceID, 1)
+
+	// WS path: A publishes its catalog; B receives it as a presence
+	// frame with agents/sessions for the shared network.
+	dcA.send(deviceFrame{
+		V: 1, Kind: kindPresence, MsgID: "cat-1",
+		Agents:   []deviceAgentWire{{Name: "alf", State: "live"}},
+		Sessions: []deviceSessionWire{{ID: "s1", State: SessionLive, Networks: []string{netID}}},
+	})
+	dcA.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-cat"})
+	if f := dcA.next("pong"); f.RefID != "barrier-cat" {
+		t.Fatalf("barrier pong refId = %q", f.RefID)
+	}
+	got := dcB.next("presence")
+	for got.Devices[0].DeviceID == devB.DeviceID || len(got.Devices[0].Agents) == 0 {
+		got = dcB.next("presence")
+	}
+	e := got.Devices[0]
+	if e.DeviceID != devA.DeviceID || e.Presence != MachineOnline {
+		t.Fatalf("catalog fanout entry = %+v", e)
+	}
+	if len(e.Agents) != 1 || e.Agents[0].Name != "alf" || e.Agents[0].State != "live" {
+		t.Fatalf("fanout agents = %+v", e.Agents)
+	}
+	if len(e.Sessions) != 1 || e.Sessions[0].ID != "s1" {
+		t.Fatalf("fanout sessions = %+v", e.Sessions)
+	}
+	if got.Network != netID {
+		t.Fatalf("fanout network = %q, want %q", got.Network, netID)
+	}
+
+	// Self-skip: A must NOT receive its own catalog fanout — the next
+	// presence frames on A before the pong barrier would fail this.
+	dcA.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-self"})
+	for {
+		f := dcA.nextAny()
+		if f.Kind == "pong" && f.RefID == "barrier-self" {
+			break
+		}
+		if f.Kind == kindPresence && len(f.Devices) > 0 && f.Devices[0].DeviceID == devA.DeviceID && len(f.Devices[0].Agents) > 0 {
+			t.Fatalf("originator received own catalog fanout: %+v", f.Devices[0])
+		}
+	}
+
+	// REST path: an owner roster PATCH fans out the same way.
+	if rec := env.do("PATCH", "/api/devices/"+devA.DeviceID+"/roster",
+		map[string]any{"agents": []map[string]any{{"name": "bob", "state": "busy"}}}, jwt); rec.Code != 200 {
+		t.Fatalf("roster patch status = %d", rec.Code)
+	}
+	got = dcB.next("presence")
+	for got.Devices[0].DeviceID == devB.DeviceID || len(got.Devices[0].Agents) == 0 {
+		got = dcB.next("presence")
+	}
+	// Roster patches merge (same projection as the WS path): the fanned
+	// catalog must contain bob alongside the earlier alf.
+	names := map[string]bool{}
+	for _, a := range got.Devices[0].Agents {
+		names[a.Name] = true
+	}
+	if !names["bob"] || !names["alf"] {
+		t.Fatalf("patch fanout agents = %+v", got.Devices[0].Agents)
+	}
+}
