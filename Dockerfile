@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Mirrors IstiN/auth: multi-stage Go build → minimal alpine runtime.
-FROM golang:alpine AS build
+FROM golang:1.27.4-alpine3.24 AS build
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 # go.sum is globbed: builds before the first dependency lands still work.
