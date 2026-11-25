@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/IstiN/fa_network/internal/model"
@@ -299,5 +301,78 @@ func TestDeviceWSCatalogFanout(t *testing.T) {
 	}
 	if !names["bob"] || !names["alf"] {
 		t.Fatalf("patch fanout agents = %+v", got.Devices[0].Agents)
+	}
+}
+
+// TestRosterPatchNoopAndRetryAfter (contract §8): a byte-identical
+// re-PATCH is a 200 no-op (no second sibling fanout); a throttled
+// patch carries Retry-After so clients can budget.
+func TestRosterPatchNoopAndRetryAfter(t *testing.T) {
+	env := newTestEnv(t)
+	jwt := env.authedToken("alice", "Alice")
+	devA := enrollDevice(t, env, jwt, "macbook")
+	devB := enrollDevice(t, env, jwt, "cli-box")
+
+	dcB := dialDeviceWS(t, env, devB.DeviceToken)
+	dcB.hello(devB.DeviceID, 1)
+	dcA := dialDeviceWS(t, env, devA.DeviceToken)
+	dcA.hello(devA.DeviceID, 1)
+
+	body := map[string]any{"agents": []map[string]any{{"name": "alf", "state": "live"}}}
+	if rec := env.do("PATCH", "/api/devices/"+devA.DeviceID+"/roster", body, jwt); rec.Code != 200 {
+		t.Fatalf("first patch = %d", rec.Code)
+	}
+	got := dcB.next("presence")
+	for len(got.Devices[0].Agents) == 0 {
+		got = dcB.next("presence")
+	}
+	if len(got.Devices[0].Agents) != 1 {
+		t.Fatalf("first fanout agents = %+v", got.Devices[0].Agents)
+	}
+	// Identical re-PATCH: 200 but NO second fanout — the next frame on
+	// B is the pong of a barrier sent after the patch, proving nothing
+	// presence-shaped was pushed in between.
+	dcA.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-noop"})
+	if f := dcA.next("pong"); f.RefID != "barrier-noop" {
+		t.Fatalf("barrier pong refId = %q", f.RefID)
+	}
+	if rec := env.do("PATCH", "/api/devices/"+devA.DeviceID+"/roster", body, jwt); rec.Code != 200 {
+		t.Fatalf("noop patch = %d", rec.Code)
+	}
+	dcB.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-b"})
+	for {
+		f := dcB.nextAny()
+		if f.Kind == "pong" && f.RefID == "barrier-b" {
+			break
+		}
+		if f.Kind == kindPresence && len(f.Devices) > 0 && f.Devices[0].DeviceID == devA.DeviceID {
+			t.Fatalf("noop patch fanned out: %+v", f.Devices[0])
+		}
+	}
+	// A DIFFERENT body fans out again (hash mismatch).
+	body2 := map[string]any{"agents": []map[string]any{{"name": "alf", "state": "busy"}}}
+	if rec := env.do("PATCH", "/api/devices/"+devA.DeviceID+"/roster", body2, jwt); rec.Code != 200 {
+		t.Fatalf("changed patch = %d", rec.Code)
+	}
+	got = dcB.next("presence")
+	for len(got.Devices[0].Agents) == 0 {
+		got = dcB.next("presence")
+	}
+	if got.Devices[0].Agents[0].State != "busy" {
+		t.Fatalf("changed fanout state = %+v", got.Devices[0].Agents)
+	}
+	// Burn the device's patch budget; the 429 must carry Retry-After.
+	var rec *httptest.ResponseRecorder
+	for i := 0; i < deviceRosterPatchRateN+5; i++ {
+		rec = env.do("PATCH", "/api/devices/"+devB.DeviceID+"/roster", body2, jwt)
+		if rec.Code == http.StatusTooManyRequests {
+			break
+		}
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after budget burn, got %d", rec.Code)
+	}
+	if ra := rec.Header().Get("Retry-After"); ra == "" {
+		t.Fatal("429 without Retry-After header")
 	}
 }

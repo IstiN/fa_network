@@ -93,7 +93,7 @@ func (s *Server) issueWSTicket(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.st.Session(r.Context(), token)
 	if err == nil {
 		if !s.limiter.Allow("wsticket|"+sess.MemberID, wsTicketRateN, wsTicketRatePer) {
-			writeError(w, http.StatusTooManyRequests, CodeThrottled, "too many ticket requests")
+			writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "too many ticket requests", 60)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

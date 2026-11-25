@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/IstiN/fa_network/internal/model"
@@ -31,26 +34,27 @@ func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 	// bounded per device, not per user: a compromised token cannot
 	// churn the projection store faster than this.
 	if !s.limiter.Allow("roster-patch|"+deviceID, deviceRosterPatchRateN, deviceRosterPatchRatePer) {
-		writeError(w, http.StatusTooManyRequests, CodeThrottled, "too many roster patches")
+		writeErrorRetry(w, http.StatusTooManyRequests, CodeThrottled, "too many roster patches", 60)
 		return
 	}
-	if device := s.deviceByToken(r.Context(), bearerToken(r)); device != nil {
-		if device.ID != deviceID {
-			writeError(w, http.StatusForbidden, CodeForbiddenClass, "device token patches only itself")
-			return
-		}
-	} else if principal := s.requireAuthed(w, r); principal != nil {
-		device, err := s.st.Device(r.Context(), deviceID)
-		if err != nil || device.UserID != principal.UserID {
-			writeError(w, http.StatusNotFound, CodeNotFound, "no such device")
-			return
-		}
-	} else {
+	device, ok := s.resolvePatchDevice(w, r, deviceID)
+	if !ok {
 		return
 	}
-	var patch rosterPatch
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "invalid roster patch")
+	body, ok := readPatchBody(w, r)
+	if !ok {
+		return
+	}
+	// Identical body for the same device = no-op (contract §8): the
+	// projection already matches, so skip the merge and the sibling
+	// fanout — repeated catalog pushes stay free of side effects.
+	sum := sha256.Sum256(body)
+	if s.rosterPatchSeen(deviceID, sum) {
+		writeJSON(w, http.StatusOK, map[string]any{"patched": deviceID})
+		return
+	}
+	patch, ok := decodePatch(w, body)
+	if !ok {
 		return
 	}
 	if msg := rosterPatchProblem(patch); msg != "" {
@@ -58,11 +62,7 @@ func (s *Server) patchDeviceRoster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deviceExposure.ApplyPresence(deviceID, patch.Agents, patch.Sessions, s.cfg.Now())
-	if device := s.deviceByToken(r.Context(), bearerToken(r)); device != nil {
-		s.agentsFanout(device)
-	} else if resolved, err := s.st.Device(r.Context(), deviceID); err == nil {
-		s.agentsFanout(resolved)
-	}
+	s.agentsFanout(device)
 	writeJSON(w, http.StatusOK, map[string]any{"patched": deviceID})
 }
 
@@ -143,4 +143,66 @@ func (s *Server) machineRosterOf(ctx context.Context, networkID string, members 
 		}
 	}
 	return out
+}
+
+// deviceRosterPatchMaxBytes caps the patch body (matches the global
+// 1MiB request cap; the hash no-op reads the body before decoding).
+const deviceRosterPatchMaxBytes = 1 << 20
+
+// readPatchBody reads a bounded roster patch body.
+func readPatchBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, deviceRosterPatchMaxBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "invalid roster patch")
+		return nil, false
+	}
+	return body, true
+}
+
+// decodePatch parses a roster patch body.
+func decodePatch(w http.ResponseWriter, body []byte) (rosterPatch, bool) {
+	var patch rosterPatch
+	if err := json.Unmarshal(body, &patch); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidCreds, "invalid roster patch")
+		return rosterPatch{}, false
+	}
+	return patch, true
+}
+
+// rosterPatchSeen records sum as device's latest patch body and reports
+// whether it equals the previously accepted one.
+func (s *Server) rosterPatchSeen(deviceID string, sum [32]byte) bool {
+	key := hex.EncodeToString(sum[:])
+	s.rosterHashMu.Lock()
+	defer s.rosterHashMu.Unlock()
+	if s.rosterHashes == nil {
+		s.rosterHashes = map[string]string{}
+	}
+	if s.rosterHashes[deviceID] == key {
+		return true
+	}
+	s.rosterHashes[deviceID] = key
+	return false
+}
+
+// resolvePatchDevice authenticates a roster patch: the device's own
+// device token (patches only itself) or the owner's JWT (own devices).
+func (s *Server) resolvePatchDevice(w http.ResponseWriter, r *http.Request, deviceID string) (*model.Device, bool) {
+	if device := s.deviceByToken(r.Context(), bearerToken(r)); device != nil {
+		if device.ID != deviceID {
+			writeError(w, http.StatusForbidden, CodeForbiddenClass, "device token patches only itself")
+			return nil, false
+		}
+		return device, true
+	}
+	principal := s.requireAuthed(w, r)
+	if principal == nil {
+		return nil, false
+	}
+	device, err := s.st.Device(r.Context(), deviceID)
+	if err != nil || device.UserID != principal.UserID {
+		writeError(w, http.StatusNotFound, CodeNotFound, "no such device")
+		return nil, false
+	}
+	return device, true
 }

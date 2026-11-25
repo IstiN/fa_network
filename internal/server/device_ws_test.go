@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"errors"
 	"github.com/coder/websocket"
 )
 
@@ -257,6 +258,10 @@ func TestDeviceMailRedeliveryInSeqOrderAndAck(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	// §10: the resume dial is only accepted once the old socket closed —
+	// close it cleanly (the connector does this on graceful restart).
+	dc.closeWS()
+	waitOffline(t, env, dev.DeviceID)
 	dc2 := dialDeviceWS(t, env, dev.DeviceToken)
 	dc2.hello(dev.DeviceID, 1)
 	f := dc2.next("mail")
@@ -267,7 +272,26 @@ func TestDeviceMailRedeliveryInSeqOrderAndAck(t *testing.T) {
 	// alive, and the mailbox state above proves m-1/m-3 are gone.
 }
 
-func TestDeviceSecondDialEvictsFirst(t *testing.T) {
+// waitOffline polls until the device has no registered socket (the
+// read pump removed it after its close) — no sleep-sync.
+func waitOffline(t *testing.T, env *testEnv, deviceID string) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		if !env.srv.deviceConns.Online(deviceID) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("device socket still registered after close")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestDeviceSecondDialRefusedWith4001 (contract §10): one upstream per
+// device, and the ESTABLISHED socket keeps it — a duplicate dial is
+// refused with close code 4001 while the first socket stays fully
+// alive. After the first socket closes cleanly, a new dial succeeds.
+func TestDeviceSecondDialRefusedWith4001(t *testing.T) {
 	env := newTestEnv(t)
 	dev := enrollDevice(t, env, env.authedToken("alice", "Alice"), "macbook")
 
@@ -275,24 +299,37 @@ func TestDeviceSecondDialEvictsFirst(t *testing.T) {
 	dc1.send(deviceFrame{V: 1, Kind: "hello", MsgID: "h1", DeviceID: dev.DeviceID})
 	dc1.next("hello_ok")
 
-	// AC1: one upstream per device — the second dial wins, the first is
-	// closed by the server (reads fail soon after).
+	// §10: the duplicate dial is refused with 4001...
 	dc2 := dialDeviceWS(t, env, dev.DeviceToken)
-	dc2.send(deviceFrame{V: 1, Kind: "hello", MsgID: "h2", DeviceID: dev.DeviceID})
-	dc2.next("hello_ok")
-
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
-		_, _, err := dc1.conn.Read(ctx)
+		_, _, err := dc2.conn.Read(ctx)
 		cancel()
+		var ce websocket.CloseError
+		if errors.As(err, &ce) && ce.Code == 4001 {
+			break
+		}
 		if err != nil {
-			return // first socket closed: eviction proven
+			t.Fatalf("duplicate dial close err = %v, want 4001", err)
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("first socket was not evicted by the second dial")
+			t.Fatal("duplicate dial was not refused with 4001")
 		}
 	}
+
+	// ...while the established socket stays fully alive (ping roundtrip).
+	dc1.send(deviceFrame{V: 1, Kind: "ping", MsgID: "barrier-4001"})
+	if f := dc1.next("pong"); f.RefID != "barrier-4001" {
+		t.Fatalf("established socket broken after refusal: refId = %q", f.RefID)
+	}
+
+	// Clean close deregisters; the next dial succeeds (no lockout).
+	dc1.closeWS()
+	waitOffline(t, env, dev.DeviceID)
+	dc3 := dialDeviceWS(t, env, dev.DeviceToken)
+	dc3.send(deviceFrame{V: 1, Kind: "hello", MsgID: "h3", DeviceID: dev.DeviceID})
+	dc3.next("hello_ok")
 }
 
 func TestDeviceRevocationClosesSocket(t *testing.T) {

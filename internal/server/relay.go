@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,6 +204,12 @@ func (r *Relay) inbound(ctx context.Context, msg *hub.Envelope) {
 	sender := msg.SenderID
 	if sender == "" {
 		sender = r.hub.AgentID() // legacy hub without `from` (issue #2, REG-3)
+	}
+	if strings.HasPrefix(msg.ChannelID, "dm:") {
+		// Identity metadata only, never ciphertext: with this line a
+		// lost-DM report decides server-side (dm-in seen = envelope
+		// reached the relay; absent = upstream loss).
+		log.Printf("relay: dm-in channel=%s msg=%s from=%s", msg.ChannelID, msg.ID, sender)
 	}
 	env := &model.Envelope{
 		ID:         msg.ID,

@@ -1001,7 +1001,11 @@ paths:
         are preserved verbatim through the projection and echoed in
         roster snapshots. Display strings reject control characters and
         bidi overrides (400; the WS presence path silently drops
-        invalid entries). Rate limit: 60 patches/min per device
+        invalid entries). Rate limit: 60 patches/min per device; a
+        throttled patch answers 429 with a `Retry-After` header (60s).
+        A byte-identical re-PATCH is a 200 no-op — no projection
+        merge, no sibling fanout (repeated catalog pushes stay free
+        of side effects); a changed body fans out as usual.
         (chunked projection pushes fit).
         Auth: the device's own deviceToken or the owner's JWT.
       security:

@@ -57,6 +57,12 @@ type Server struct {
 	// activity) — pure write amplification for polling clients.
 	touchMu   sync.Mutex
 	lastTouch map[string]time.Time
+	// rosterHashMu/rosterHashes remember the last accepted roster patch
+	// body per device: an identical re-PATCH is a no-op (200, no
+	// projection merge, no sibling fanout) — stormy or chunked clients
+	// stop burning the fanout budget with byte-identical catalogs.
+	rosterHashMu sync.Mutex
+	rosterHashes map[string]string
 }
 
 // touchThrottle bounds how often one session's activity is persisted;
@@ -88,6 +94,7 @@ func New(st store.Store, authProvider auth.Provider, hubClient hub.Client, dispa
 		triggers:       cfg.Triggers,
 		tickets:        newTicketStore(cfg.Now),
 		deviceConns:    NewDeviceRegistry(),
+		rosterHashes:   map[string]string{},
 		deviceMail:     newDeviceMailboxes(),
 		deviceExposure: newDeviceExposure(),
 	}

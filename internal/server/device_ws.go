@@ -100,29 +100,36 @@ func (c *deviceConn) silentFor(at, after time.Time) bool {
 }
 
 // DeviceRegistry tracks live device sockets — one upstream per device
-// (contract AC1). A second dial for the same device wins; the older
-// socket is closed (connector reconnect storms stay safe).
+// (contract §10). The ESTABLISHED socket wins: a duplicate dial is
+// refused with close code 4001 (duplicate device connection) instead
+// of evicting — N misbehaving clients can no longer ping-pong each
+// other off the device. A client killed without a close frame leaves
+// a zombie socket that the ping-ghost sweep removes within ~45s; the
+// refused dialer retries after a backoff and then succeeds.
 type DeviceRegistry struct {
 	mu   sync.Mutex
 	cons map[string]*deviceConn
 }
+
+// CloseDuplicateDevice is the WebSocket close code sent to a dial that
+// arrives while the device's socket is already established.
+const CloseDuplicateDevice = 4001
 
 // NewDeviceRegistry returns an empty registry.
 func NewDeviceRegistry() *DeviceRegistry {
 	return &DeviceRegistry{cons: map[string]*deviceConn{}}
 }
 
-// Add registers conn for its device, closing and evicting any older
-// socket. The evicted socket's mail frame stays in its mailbox.
-func (r *DeviceRegistry) Add(conn *deviceConn) (evicted bool) {
+// Add registers conn for its device. If the device already has a live
+// socket, the new conn is refused (the caller closes it with 4001);
+// the established socket keeps the device.
+func (r *DeviceRegistry) Add(conn *deviceConn) (refused bool) {
 	r.mu.Lock()
-	old, ok := r.cons[conn.device.ID]
-	r.cons[conn.device.ID] = conn
-	r.mu.Unlock()
-	if ok && old != conn {
-		old.closeConn()
+	defer r.mu.Unlock()
+	if old, ok := r.cons[conn.device.ID]; ok && old != conn {
 		return true
 	}
+	r.cons[conn.device.ID] = conn
 	return false
 }
 
@@ -285,7 +292,14 @@ func (s *Server) serveDeviceWS(w http.ResponseWriter, r *http.Request, deviceTok
 		closeConn: func() { _ = conn.CloseNow() },
 		lastPong:  time.Now(),
 	}
-	s.deviceConns.Add(dc)
+	if s.deviceConns.Add(dc) {
+		// Contract §10: the established socket keeps the device. Refuse
+		// the duplicate with a dedicated close code so well-behaved
+		// clients stop dialing (a zombie predecessor is swept by the
+		// ping-ghost timeout; the refused dialer retries after a backoff).
+		_ = conn.Close(websocket.StatusCode(CloseDuplicateDevice), "duplicate device connection")
+		return
+	}
 	box := s.deviceMail.of(device.ID)
 	s.setMachineAndFanout(device, MachineOnline)
 
